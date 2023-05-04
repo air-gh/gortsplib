@@ -637,8 +637,15 @@ func (ss *ServerSession) handleRequest(sc *ServerConn, req *base.Request) (*base
 			}, liberrors.ErrServerTransportHeaderInvalid{Err: err}
 		}
 
+		isWMPlayer := false
+		// workaround to avoid UDP for WMPlayer
+		if ua, ok := req.Header["User-Agent"]; ok && len(ua) == 1 &&
+			strings.HasPrefix(ua[0], "WMPlayer") {
+				isWMPlayer = true
+		}
+
 		inTH := findFirstSupportedTransportHeader(ss.s, inTSH)
-		if inTH == nil {
+		if inTH == nil || (isWMPlayer && inTH.Protocol == headers.TransportProtocolUDP) {
 			return &base.Response{
 				StatusCode: base.StatusUnsupportedTransport,
 			}, nil
