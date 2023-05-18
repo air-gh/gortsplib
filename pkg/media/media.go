@@ -4,6 +4,7 @@ package media
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats"
 	"github.com/bluenviron/gortsplib/v3/pkg/url"
 )
+
+var smartRegexp = regexp.MustCompile("^([0-9]+) (.*?)/90000")
 
 func getControlAttribute(attributes []psdp.Attribute) string {
 	for _, attr := range attributes {
@@ -44,7 +47,7 @@ func getFormatAttribute(attributes []psdp.Attribute, payloadType uint8, key stri
 		if attr.Key == key {
 			v := strings.TrimSpace(attr.Value)
 			if parts := strings.SplitN(v, " ", 2); len(parts) == 2 {
-				if tmp, err := strconv.ParseInt(parts[0], 10, 8); err == nil && uint8(tmp) == payloadType {
+				if tmp, err := strconv.ParseUint(parts[0], 10, 8); err == nil && uint8(tmp) == payloadType {
 					return parts[1]
 				}
 			}
@@ -135,16 +138,16 @@ func (m *Media) unmarshal(md *psdp.MediaDescription) error {
 		if payloadType == "smart/1/90000" {
 			for _, attr := range md.Attributes {
 				if attr.Key == "rtpmap" {
-					i := strings.Index(attr.Value, " TP-LINK/90000")
-					if i >= 0 {
-						payloadType = attr.Value[:i]
+					sm := smartRegexp.FindStringSubmatch(attr.Value)
+					if sm != nil {
+						payloadType = sm[1]
 						break
 					}
 				}
 			}
 		}
 
-		tmp, err := strconv.ParseInt(payloadType, 10, 8)
+		tmp, err := strconv.ParseUint(payloadType, 10, 8)
 		if err != nil {
 			return err
 		}
