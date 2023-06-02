@@ -6,14 +6,11 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpmpeg2audio"
 )
 
-// MPEG2Audio is a RTP format that uses a MPEG-1 or MPEG-2 Audio codec.
+// MPEG2Audio is a RTP format that uses a MPEG-1/2 Audio codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc2250
 type MPEG2Audio struct{}
 
-func (f *MPEG2Audio) unmarshal(
-	payloadType uint8, clock string, codec string,
-	rtpmap string, fmtp map[string]string,
-) error {
+func (f *MPEG2Audio) unmarshal(_ uint8, _ string, _ string, _ string, _ map[string]string) error {
 	return nil
 }
 
@@ -48,15 +45,41 @@ func (f *MPEG2Audio) PTSEqualsDTS(*rtp.Packet) bool {
 }
 
 // CreateDecoder creates a decoder able to decode the content of the format.
+//
+// Deprecated: this has been replaced by CreateDecoder2() that can also return an error.
 func (f *MPEG2Audio) CreateDecoder() *rtpmpeg2audio.Decoder {
-	d := &rtpmpeg2audio.Decoder{}
-	d.Init()
+	d, _ := f.CreateDecoder2()
 	return d
 }
 
+// CreateDecoder2 creates a decoder able to decode the content of the format.
+func (f *MPEG2Audio) CreateDecoder2() (*rtpmpeg2audio.Decoder, error) {
+	d := &rtpmpeg2audio.Decoder{}
+
+	err := d.Init()
+	if err != nil {
+		return nil, err
+	}
+
+	return d, nil
+}
+
 // CreateEncoder creates an encoder able to encode the content of the format.
+//
+// Deprecated: this has been replaced by CreateEncoder2() that can also return an error.
 func (f *MPEG2Audio) CreateEncoder() *rtpmpeg2audio.Encoder {
-	e := &rtpmpeg2audio.Encoder{}
-	e.Init()
+	e, _ := f.CreateEncoder2()
 	return e
+}
+
+// CreateEncoder2 creates an encoder able to encode the content of the format.
+func (f *MPEG2Audio) CreateEncoder2() (*rtpmpeg2audio.Encoder, error) {
+	e := &rtpmpeg2audio.Encoder{}
+
+	err := e.Init()
+	if err != nil {
+		return nil, err
+	}
+
+	return e, nil
 }

@@ -46,7 +46,7 @@ type Encoder struct {
 }
 
 // Init initializes the encoder.
-func (e *Encoder) Init() {
+func (e *Encoder) Init() error {
 	if e.SSRC == nil {
 		v := randUint32()
 		e.SSRC = &v
@@ -65,17 +65,23 @@ func (e *Encoder) Init() {
 
 	e.sequenceNumber = *e.InitialSequenceNumber
 	e.timeEncoder = rtptime.NewEncoder(90000, *e.InitialTimestamp)
+	return nil
+}
+
+func packetCount(avail, le int) int {
+	packetCount := le / avail
+	lastPacketSize := le % avail
+	if lastPacketSize > 0 {
+		packetCount++
+	}
+	return packetCount
 }
 
 // Encode encodes a frame into RTP packets.
 func (e *Encoder) Encode(frame []byte, pts time.Duration) ([]*rtp.Packet, error) {
 	avail := e.PayloadMaxSize
 	le := len(frame)
-	packetCount := le / avail
-	lastPacketSize := le % avail
-	if lastPacketSize > 0 {
-		packetCount++
-	}
+	packetCount := packetCount(avail, le)
 
 	pos := 0
 	ret := make([]*rtp.Packet, packetCount)
@@ -86,11 +92,8 @@ func (e *Encoder) Encode(frame []byte, pts time.Duration) ([]*rtp.Packet, error)
 		if i != (packetCount - 1) {
 			le = avail
 		} else {
-			le = lastPacketSize
+			le = len(frame[pos:])
 		}
-
-		payload := make([]byte, le)
-		pos += copy(payload, frame[pos:])
 
 		ret[i] = &rtp.Packet{
 			Header: rtp.Header{
@@ -101,9 +104,10 @@ func (e *Encoder) Encode(frame []byte, pts time.Duration) ([]*rtp.Packet, error)
 				SSRC:           *e.SSRC,
 				Marker:         (i == len(ret)-1),
 			},
-			Payload: payload,
+			Payload: frame[pos : pos+le],
 		}
 
+		pos += le
 		e.sequenceNumber++
 	}
 

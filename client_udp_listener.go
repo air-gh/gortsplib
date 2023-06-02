@@ -106,16 +106,9 @@ func newClientUDPListener(
 			return nil, err
 		}
 
-		intfs, err := net.Interfaces()
+		err = joinMulticastGroupOnAtLeastOneInterface(p, net.ParseIP(host))
 		if err != nil {
 			return nil, err
-		}
-
-		for _, intf := range intfs {
-			err := p.JoinGroup(&intf, &net.UDPAddr{IP: net.ParseIP(host)})
-			if err != nil {
-				return nil, err
-			}
 		}
 
 		pc = tmp.(*net.UDPConn)
@@ -153,11 +146,11 @@ func (u *clientUDPListener) port() int {
 	return u.pc.LocalAddr().(*net.UDPAddr).Port
 }
 
-func (u *clientUDPListener) start(forPlay bool) {
+func (u *clientUDPListener) start() {
 	u.running = true
 	u.pc.SetReadDeadline(time.Time{})
 	u.readerDone = make(chan struct{})
-	go u.runReader(forPlay)
+	go u.runReader()
 }
 
 func (u *clientUDPListener) stop() {
@@ -165,7 +158,7 @@ func (u *clientUDPListener) stop() {
 	<-u.readerDone
 }
 
-func (u *clientUDPListener) runReader(forPlay bool) {
+func (u *clientUDPListener) runReader() {
 	defer close(u.readerDone)
 
 	var readFunc func([]byte) error

@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
 
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpmpeg4audio"
-	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
 )
 
 // MPEG4Audio is an alias for MPEG4AudioGeneric.
@@ -27,8 +27,8 @@ type MPEG4AudioGeneric struct {
 }
 
 func (f *MPEG4AudioGeneric) unmarshal(
-	payloadType uint8, clock string, codec string,
-	rtpmap string, fmtp map[string]string,
+	payloadType uint8, _ string, _ string,
+	_ string, fmtp map[string]string,
 ) error {
 	f.PayloadTyp = payloadType
 
@@ -100,7 +100,8 @@ func (f *MPEG4AudioGeneric) unmarshal(
 
 // String implements Format.
 func (f *MPEG4AudioGeneric) String() string {
-	return "MPEG4-audio-gen"
+	// currently, String() returns the codec name, hence hide the format name.
+	return "MPEG4-audio"
 }
 
 // ClockRate implements Format.
@@ -170,19 +171,40 @@ func (f *MPEG4AudioGeneric) PTSEqualsDTS(*rtp.Packet) bool {
 }
 
 // CreateDecoder creates a decoder able to decode the content of the format.
+//
+// Deprecated: this has been replaced by CreateDecoder2() that can also return an error.
 func (f *MPEG4AudioGeneric) CreateDecoder() *rtpmpeg4audio.Decoder {
+	d, _ := f.CreateDecoder2()
+	return d
+}
+
+// CreateDecoder2 creates a decoder able to decode the content of the format.
+func (f *MPEG4AudioGeneric) CreateDecoder2() (*rtpmpeg4audio.Decoder, error) {
 	d := &rtpmpeg4audio.Decoder{
 		SampleRate:       f.Config.SampleRate,
 		SizeLength:       f.SizeLength,
 		IndexLength:      f.IndexLength,
 		IndexDeltaLength: f.IndexDeltaLength,
 	}
-	d.Init()
-	return d
+
+	err := d.Init()
+	if err != nil {
+		return nil, err
+	}
+
+	return d, nil
 }
 
 // CreateEncoder creates an encoder able to encode the content of the format.
+//
+// Deprecated: this has been replaced by CreateEncoder2() that can also return an error.
 func (f *MPEG4AudioGeneric) CreateEncoder() *rtpmpeg4audio.Encoder {
+	e, _ := f.CreateEncoder2()
+	return e
+}
+
+// CreateEncoder2 creates an encoder able to encode the content of the format.
+func (f *MPEG4AudioGeneric) CreateEncoder2() (*rtpmpeg4audio.Encoder, error) {
 	e := &rtpmpeg4audio.Encoder{
 		PayloadType:      f.PayloadTyp,
 		SampleRate:       f.Config.SampleRate,
@@ -190,6 +212,11 @@ func (f *MPEG4AudioGeneric) CreateEncoder() *rtpmpeg4audio.Encoder {
 		IndexLength:      f.IndexLength,
 		IndexDeltaLength: f.IndexDeltaLength,
 	}
-	e.Init()
-	return e
+
+	err := e.Init()
+	if err != nil {
+		return nil, err
+	}
+
+	return e, nil
 }
