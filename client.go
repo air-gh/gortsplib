@@ -31,6 +31,26 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/url"
 )
 
+// convert an URL into an address, in particular:
+// * add default port
+// * handle IPv6 with or without square brackets.
+// Adapted from net/http:
+// https://cs.opensource.google/go/go/+/refs/tags/go1.20.5:src/net/http/transport.go;l=2747
+func canonicalAddr(u *url.URL) string {
+	addr := u.Hostname()
+
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "rtsp" {
+			port = "554"
+		} else { // rtsps
+			port = "322"
+		}
+	}
+
+	return net.JoinHostPort(addr, port)
+}
+
 func isAnyPort(p int) bool {
 	return p == 0 || p == 1
 }
@@ -249,32 +269,31 @@ type Client struct {
 	checkTimeoutPeriod      time.Duration
 	keepalivePeriod         time.Duration
 
-	scheme              string
-	host                string
-	ctx                 context.Context
-	ctxCancel           func()
-	state               clientState
-	nconn               net.Conn
-	conn                *conn.Conn
-	session             string
-	sender              *auth.Sender
-	cseq                int
-	optionsSent         bool
-	useGetParameter     bool
-	lastDescribeURL     *url.URL
-	baseURL             *url.URL
-	effectiveTransport  *Transport
-	medias              map[*media.Media]*clientMedia
-	tcpMediasByChannel  map[int]*clientMedia
-	lastRange           *headers.Range
-	checkTimeoutTimer   *time.Timer
-	checkTimeoutInitial bool
-	tcpLastFrameTime    *int64
-	keepaliveTimer      *time.Timer
-	closeError          error
-	writer              asyncProcessor
-	reader              *clientReader
-	connCloser          *clientConnCloser
+	connURL              *url.URL
+	ctx                  context.Context
+	ctxCancel            func()
+	state                clientState
+	nconn                net.Conn
+	conn                 *conn.Conn
+	session              string
+	sender               *auth.Sender
+	cseq                 int
+	optionsSent          bool
+	useGetParameter      bool
+	lastDescribeURL      *url.URL
+	baseURL              *url.URL
+	effectiveTransport   *Transport
+	medias               map[*media.Media]*clientMedia
+	tcpCallbackByChannel map[int]readFunc
+	lastRange            *headers.Range
+	checkTimeoutTimer    *time.Timer
+	checkTimeoutInitial  bool
+	tcpLastFrameTime     *int64
+	keepaliveTimer       *time.Timer
+	closeError           error
+	writer               asyncProcessor
+	reader               *clientReader
+	connCloser           *clientConnCloser
 
 	// in
 	options   chan optionsReq
@@ -383,8 +402,10 @@ func (c *Client) Start(scheme string, host string) error {
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 
-	c.scheme = scheme
-	c.host = host
+	c.connURL = &url.URL{
+		Scheme: scheme,
+		Host:   host,
+	}
 	c.ctx = ctx
 	c.ctxCancel = ctxCancel
 	c.checkTimeoutTimer = emptyTimer()
@@ -556,7 +577,7 @@ func (c *Client) reset() {
 	c.baseURL = nil
 	c.effectiveTransport = nil
 	c.medias = nil
-	c.tcpMediasByChannel = nil
+	c.tcpCallbackByChannel = nil
 }
 
 func (c *Client) checkState(allowed map[clientState]struct{}) error {
@@ -577,8 +598,7 @@ func (c *Client) checkState(allowed map[clientState]struct{}) error {
 func (c *Client) trySwitchingProtocol() error {
 	c.OnTransportSwitch(fmt.Errorf("no UDP packets received, switching to TCP"))
 
-	prevScheme := c.scheme
-	prevHost := c.host
+	prevConnURL := c.connURL
 	prevBaseURL := c.baseURL
 	prevMedias := c.medias
 
@@ -586,8 +606,7 @@ func (c *Client) trySwitchingProtocol() error {
 
 	v := TransportTCP
 	c.effectiveTransport = &v
-	c.scheme = prevScheme
-	c.host = prevHost
+	c.connURL = prevConnURL
 
 	// some Hikvision cameras require a describe before a setup
 	_, _, _, err := c.doDescribe(c.lastDescribeURL)
@@ -618,15 +637,13 @@ func (c *Client) trySwitchingProtocol() error {
 func (c *Client) trySwitchingProtocol2(medi *media.Media, baseURL *url.URL) (*base.Response, error) {
 	c.OnTransportSwitch(fmt.Errorf("switching to TCP because server requested it"))
 
-	prevScheme := c.scheme
-	prevHost := c.host
+	prevConnURL := c.connURL
 
 	c.reset()
 
 	v := TransportTCP
 	c.effectiveTransport = &v
-	c.scheme = prevScheme
-	c.host = prevHost
+	c.connURL = prevConnURL
 
 	// some Hikvision cameras require a describe before a setup
 	_, _, _, err := c.doDescribe(c.lastDescribeURL)
@@ -700,41 +717,30 @@ func (c *Client) playRecordStop(isClosing bool) {
 }
 
 func (c *Client) connOpen() error {
-	if c.scheme != "rtsp" && c.scheme != "rtsps" {
-		return fmt.Errorf("unsupported scheme '%s'", c.scheme)
+	if c.connURL.Scheme != "rtsp" && c.connURL.Scheme != "rtsps" {
+		return fmt.Errorf("unsupported scheme '%s'", c.connURL.Scheme)
 	}
 
-	if c.scheme == "rtsps" && c.Transport != nil && *c.Transport != TransportTCP {
+	if c.connURL.Scheme == "rtsps" && c.Transport != nil && *c.Transport != TransportTCP {
 		return fmt.Errorf("RTSPS can be used only with TCP")
-	}
-
-	// add default port
-	_, _, err := net.SplitHostPort(c.host)
-	if err != nil {
-		if c.scheme == "rtsp" {
-			c.host = net.JoinHostPort(c.host, "554")
-		} else { // rtsps
-			c.host = net.JoinHostPort(c.host, "322")
-		}
 	}
 
 	dialCtx, dialCtxCancel := context.WithTimeout(c.ctx, c.ReadTimeout)
 	defer dialCtxCancel()
 
-	nconn, err := c.DialContext(dialCtx, "tcp", c.host)
+	nconn, err := c.DialContext(dialCtx, "tcp", canonicalAddr(c.connURL))
 	if err != nil {
 		return err
 	}
 
-	if c.scheme == "rtsps" {
+	if c.connURL.Scheme == "rtsps" {
 		tlsConfig := c.TLSConfig
 
 		if tlsConfig == nil {
 			tlsConfig = &tls.Config{}
 		}
 
-		host, _, _ := net.SplitHostPort(c.host)
-		tlsConfig.ServerName = host
+		tlsConfig.ServerName = c.connURL.Hostname()
 
 		nconn = tls.Client(nconn, tlsConfig)
 	}
@@ -997,8 +1003,10 @@ func (c *Client) doDescribe(u *url.URL) (media.Medias, *url.URL, *base.Response,
 				ru.User = u.User
 			}
 
-			c.scheme = ru.Scheme
-			c.host = ru.Host
+			c.connURL = &url.URL{
+				Scheme: ru.Scheme,
+				Host:   ru.Host,
+			}
 
 			return c.doDescribe(ru)
 		}
@@ -1125,7 +1133,7 @@ func (c *Client) doSetup(
 	}
 
 	// always use TCP if encrypted
-	if c.scheme == "rtsps" {
+	if c.connURL.Scheme == "rtsps" {
 		v := TransportTCP
 		c.effectiveTransport = &v
 	}
@@ -1190,8 +1198,8 @@ func (c *Client) doSetup(
 		v1 := headers.TransportDeliveryUnicast
 		th.Delivery = &v1
 		th.Protocol = headers.TransportProtocolTCP
-		mediaCount := len(c.medias)
-		th.InterleavedIDs = &[2]int{(mediaCount * 2), (mediaCount * 2) + 1}
+		ch := c.findFreeChannelPair()
+		th.InterleavedIDs = &[2]int{ch, ch + 1}
 	}
 
 	mediaURL, err := medi.URL(baseURL)
@@ -1348,22 +1356,16 @@ func (c *Client) doSetup(
 			return nil, liberrors.ErrClientTransportHeaderNoInterleavedIDs{}
 		}
 
-		if (thRes.InterleavedIDs[0]%2) != 0 ||
-			(thRes.InterleavedIDs[0]+1) != thRes.InterleavedIDs[1] {
+		if (thRes.InterleavedIDs[0] + 1) != thRes.InterleavedIDs[1] {
 			return nil, liberrors.ErrClientTransportHeaderInvalidInterleavedIDs{}
 		}
 
-		if _, ok := c.tcpMediasByChannel[thRes.InterleavedIDs[0]]; ok {
+		if c.isChannelPairInUse(thRes.InterleavedIDs[0]) {
 			return &base.Response{
 				StatusCode: base.StatusBadRequest,
-			}, liberrors.ErrClientTransportHeaderInterleavedIDsAlreadyUsed{}
+			}, liberrors.ErrClientTransportHeaderInterleavedIDsInUse{}
 		}
 
-		if c.tcpMediasByChannel == nil {
-			c.tcpMediasByChannel = make(map[int]*clientMedia)
-		}
-
-		c.tcpMediasByChannel[thRes.InterleavedIDs[0]] = cm
 		cm.tcpChannel = thRes.InterleavedIDs[0]
 	}
 
@@ -1384,6 +1386,23 @@ func (c *Client) doSetup(
 	}
 
 	return res, nil
+}
+
+func (c *Client) isChannelPairInUse(channel int) bool {
+	for _, cm := range c.medias {
+		if (cm.tcpChannel+1) == channel || cm.tcpChannel == channel || cm.tcpChannel == (channel+1) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) findFreeChannelPair() int {
+	for i := 0; ; i += 2 { // prefer even channels
+		if !c.isChannelPairInUse(i) {
+			return i
+		}
+	}
 }
 
 // Setup writes a SETUP request and reads a Response.

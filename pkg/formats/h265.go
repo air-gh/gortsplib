@@ -11,7 +11,7 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtph265"
 )
 
-// H265 is a RTP format that uses the H265 codec.
+// H265 is a RTP format for the H265 codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc7798
 type H265 struct {
 	PayloadTyp uint8
@@ -61,9 +61,16 @@ func (f *H265) unmarshal(payloadType uint8, _ string, _ string, _ string, fmtp m
 	return nil
 }
 
-// String implements Format.
-func (f *H265) String() string {
+// Codec implements Format.
+func (f *H265) Codec() string {
 	return "H265"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *H265) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.

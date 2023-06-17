@@ -14,7 +14,7 @@ import (
 // MPEG4Video is an alias for MPEG4VideoES.
 type MPEG4Video = MPEG4VideoES
 
-// MPEG4VideoES is a RTP format that uses a MPEG-4 Video codec.
+// MPEG4VideoES is a RTP format for a MPEG-4 Video codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc6416#section-7.1
 type MPEG4VideoES struct {
 	PayloadTyp     uint8
@@ -51,9 +51,16 @@ func (f *MPEG4VideoES) unmarshal(
 	return nil
 }
 
+// Codec implements Format.
+func (f *MPEG4VideoES) Codec() string {
+	return "MPEG-4 Video"
+}
+
 // String implements Format.
+//
+// Deprecated: replaced by Codec().
 func (f *MPEG4VideoES) String() string {
-	return "MPEG4-video-es"
+	return f.Codec()
 }
 
 // ClockRate implements Format.

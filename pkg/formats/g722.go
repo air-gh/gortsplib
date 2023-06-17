@@ -6,7 +6,7 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpsimpleaudio"
 )
 
-// G722 is a RTP format that uses the G722 codec.
+// G722 is a RTP format for the G722 codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc3551
 type G722 struct{}
 
@@ -14,9 +14,16 @@ func (f *G722) unmarshal(_ uint8, _ string, _ string, _ string, _ map[string]str
 	return nil
 }
 
-// String implements Format.
-func (f *G722) String() string {
+// Codec implements Format.
+func (f *G722) Codec() string {
 	return "G722"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *G722) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.

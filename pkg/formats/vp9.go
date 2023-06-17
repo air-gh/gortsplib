@@ -9,7 +9,7 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpvp9"
 )
 
-// VP9 is a RTP format that uses the VP9 codec.
+// VP9 is a RTP format for the VP9 codec.
 // Specification: https://datatracker.ietf.org/doc/html/draft-ietf-payload-vp9-16
 type VP9 struct {
 	PayloadTyp uint8
@@ -55,9 +55,16 @@ func (f *VP9) unmarshal(payloadType uint8, _ string, _ string, _ string, fmtp ma
 	return nil
 }
 
-// String implements Format.
-func (f *VP9) String() string {
+// Codec implements Format.
+func (f *VP9) Codec() string {
 	return "VP9"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *VP9) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.

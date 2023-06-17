@@ -15,7 +15,7 @@ import (
 // MPEG4Audio is an alias for MPEG4AudioGeneric.
 type MPEG4Audio = MPEG4AudioGeneric
 
-// MPEG4AudioGeneric is a RTP format that uses a MPEG-4 Audio codec.
+// MPEG4AudioGeneric is a RTP format for a MPEG-4 Audio codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc3640
 type MPEG4AudioGeneric struct {
 	PayloadTyp       uint8
@@ -98,10 +98,16 @@ func (f *MPEG4AudioGeneric) unmarshal(
 	return nil
 }
 
+// Codec implements Format.
+func (f *MPEG4AudioGeneric) Codec() string {
+	return "MPEG-4 Audio"
+}
+
 // String implements Format.
+//
+// Deprecated: replaced by Codec().
 func (f *MPEG4AudioGeneric) String() string {
-	// currently, String() returns the codec name, hence hide the format name.
-	return "MPEG4-audio"
+	return f.Codec()
 }
 
 // ClockRate implements Format.

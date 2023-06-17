@@ -1,10 +1,10 @@
-package formats
+package formats //nolint:dupl
 
 import (
 	"github.com/pion/rtp"
 )
 
-// MPEG2Video is a RTP format that uses a MPEG-1/2 Video codec.
+// MPEG2Video is a RTP format for a MPEG-1/2 Video codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc2250
 type MPEG2Video struct{}
 
@@ -12,9 +12,16 @@ func (f *MPEG2Video) unmarshal(_ uint8, _ string, _ string, _ string, _ map[stri
 	return nil
 }
 
+// Codec implements Format.
+func (f *MPEG2Video) Codec() string {
+	return "MPEG-1/2 Video"
+}
+
 // String implements Format.
+//
+// Deprecated: replaced by Codec().
 func (f *MPEG2Video) String() string {
-	return "MPEG2-video"
+	return f.Codec()
 }
 
 // ClockRate implements Format.

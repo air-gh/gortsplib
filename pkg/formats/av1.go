@@ -9,7 +9,7 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpav1"
 )
 
-// AV1 is a RTP format that uses the AV1 codec.
+// AV1 is a RTP format for the AV1 codec.
 // Specification: https://aomediacodec.github.io/av1-rtp-spec/
 type AV1 struct {
 	PayloadTyp uint8
@@ -55,9 +55,16 @@ func (f *AV1) unmarshal(payloadType uint8, _ string, _ string, _ string, fmtp ma
 	return nil
 }
 
-// String implements Format.
-func (f *AV1) String() string {
+// Codec implements Format.
+func (f *AV1) Codec() string {
 	return "AV1"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *AV1) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.

@@ -9,7 +9,7 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpvp8"
 )
 
-// VP8 is a RTP format that uses the VP8 codec.
+// VP8 is a RTP format for the VP8 codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc7741
 type VP8 struct {
 	PayloadTyp uint8
@@ -45,9 +45,16 @@ func (f *VP8) unmarshal(payloadType uint8, _ string, _ string, _ string, fmtp ma
 	return nil
 }
 
-// String implements Format.
-func (f *VP8) String() string {
+// Codec implements Format.
+func (f *VP8) Codec() string {
 	return "VP8"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *VP8) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.

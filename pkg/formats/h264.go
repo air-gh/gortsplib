@@ -70,7 +70,7 @@ func rtpH264ContainsIDR(pkt *rtp.Packet) bool {
 	}
 }
 
-// H264 is a RTP format that uses the H264 codec, defined in MPEG-4 part 10.
+// H264 is a RTP format for the H264 codec, defined in MPEG-4 part 10.
 // Specification: https://datatracker.ietf.org/doc/html/rfc6184
 type H264 struct {
 	PayloadTyp        uint8
@@ -116,9 +116,16 @@ func (f *H264) unmarshal(payloadType uint8, _ string, _ string, _ string, fmtp m
 	return nil
 }
 
-// String implements Format.
-func (f *H264) String() string {
+// Codec implements Format.
+func (f *H264) Codec() string {
 	return "H264"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *H264) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.

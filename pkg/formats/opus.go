@@ -10,7 +10,7 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpsimpleaudio"
 )
 
-// Opus is a RTP format that uses the Opus codec.
+// Opus is a RTP format for the Opus codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc7587
 type Opus struct {
 	PayloadTyp uint8
@@ -44,9 +44,16 @@ func (f *Opus) unmarshal(payloadType uint8, clock string, _ string, _ string, fm
 	return nil
 }
 
-// String implements Format.
-func (f *Opus) String() string {
+// Codec implements Format.
+func (f *Opus) Codec() string {
 	return "Opus"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *Opus) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.

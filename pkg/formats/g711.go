@@ -6,7 +6,7 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpsimpleaudio"
 )
 
-// G711 is a RTP format that uses the G711 codec, encoded with mu-law or A-law.
+// G711 is a RTP format for the G711 codec, encoded with mu-law or A-law.
 // Specification: https://datatracker.ietf.org/doc/html/rfc3551
 type G711 struct {
 	// whether to use mu-law. Otherwise, A-law is used.
@@ -18,9 +18,16 @@ func (f *G711) unmarshal(payloadType uint8, _ string, _ string, _ string, _ map[
 	return nil
 }
 
-// String implements Format.
-func (f *G711) String() string {
+// Codec implements Format.
+func (f *G711) Codec() string {
 	return "G711"
+}
+
+// String implements Format.
+//
+// Deprecated: replaced by Codec().
+func (f *G711) String() string {
+	return f.Codec()
 }
 
 // ClockRate implements Format.
