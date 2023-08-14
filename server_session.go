@@ -197,6 +197,7 @@ func newServerSession(
 // Close closes the ServerSession.
 func (ss *ServerSession) Close() error {
 	ss.ctxCancel()
+	// TODO: remove return value in next major version
 	return nil
 }
 
@@ -1138,7 +1139,7 @@ func (ss *ServerSession) findFreeChannelPair() int {
 }
 
 // OnPacketRTPAny sets the callback that is called when a RTP packet is read from any setupped media.
-func (ss *ServerSession) OnPacketRTPAny(cb func(*media.Media, formats.Format, *rtp.Packet)) {
+func (ss *ServerSession) OnPacketRTPAny(cb OnPacketRTPAnyFunc) {
 	for _, sm := range ss.setuppedMedias {
 		cmedia := sm.media
 		for _, forma := range sm.media.Formats {
@@ -1150,7 +1151,7 @@ func (ss *ServerSession) OnPacketRTPAny(cb func(*media.Media, formats.Format, *r
 }
 
 // OnPacketRTCPAny sets the callback that is called when a RTCP packet is read from any setupped media.
-func (ss *ServerSession) OnPacketRTCPAny(cb func(*media.Media, rtcp.Packet)) {
+func (ss *ServerSession) OnPacketRTCPAny(cb OnPacketRTCPAnyFunc) {
 	for _, sm := range ss.setuppedMedias {
 		cmedia := sm.media
 		ss.OnPacketRTCP(sm.media, func(pkt rtcp.Packet) {
@@ -1160,14 +1161,14 @@ func (ss *ServerSession) OnPacketRTCPAny(cb func(*media.Media, rtcp.Packet)) {
 }
 
 // OnPacketRTP sets the callback that is called when a RTP packet is read.
-func (ss *ServerSession) OnPacketRTP(medi *media.Media, forma formats.Format, cb func(*rtp.Packet)) {
+func (ss *ServerSession) OnPacketRTP(medi *media.Media, forma formats.Format, cb OnPacketRTPFunc) {
 	sm := ss.setuppedMedias[medi]
 	st := sm.formats[forma.PayloadType()]
 	st.onPacketRTP = cb
 }
 
 // OnPacketRTCP sets the callback that is called when a RTCP packet is read.
-func (ss *ServerSession) OnPacketRTCP(medi *media.Media, cb func(rtcp.Packet)) {
+func (ss *ServerSession) OnPacketRTCP(medi *media.Media, cb OnPacketRTCPFunc) {
 	sm := ss.setuppedMedias[medi]
 	sm.onPacketRTCP = cb
 }
@@ -1178,13 +1179,14 @@ func (ss *ServerSession) writePacketRTP(medi *media.Media, byts []byte) {
 }
 
 // WritePacketRTP writes a RTP packet to the session.
-func (ss *ServerSession) WritePacketRTP(medi *media.Media, pkt *rtp.Packet) {
+func (ss *ServerSession) WritePacketRTP(medi *media.Media, pkt *rtp.Packet) error {
 	byts, err := pkt.Marshal()
 	if err != nil {
-		return
+		return err
 	}
 
 	ss.writePacketRTP(medi, byts)
+	return nil
 }
 
 func (ss *ServerSession) writePacketRTCP(medi *media.Media, byts []byte) {
@@ -1193,13 +1195,14 @@ func (ss *ServerSession) writePacketRTCP(medi *media.Media, byts []byte) {
 }
 
 // WritePacketRTCP writes a RTCP packet to the session.
-func (ss *ServerSession) WritePacketRTCP(medi *media.Media, pkt rtcp.Packet) {
+func (ss *ServerSession) WritePacketRTCP(medi *media.Media, pkt rtcp.Packet) error {
 	byts, err := pkt.Marshal()
 	if err != nil {
-		return
+		return err
 	}
 
 	ss.writePacketRTCP(medi, byts)
+	return nil
 }
 
 func (ss *ServerSession) handleRequest(req sessionRequestReq) (*base.Response, *ServerSession, error) {

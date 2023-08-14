@@ -10,11 +10,26 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/url"
 )
 
-// GenerateNonce generates a nonce that can be used in Validate().
-func GenerateNonce() string {
+// GenerateNonce2 generates a nonce that can be used in Validate().
+func GenerateNonce2() (string, error) {
 	byts := make([]byte, 16)
-	rand.Read(byts)
-	return hex.EncodeToString(byts)
+	_, err := rand.Read(byts)
+	if err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(byts), nil
+}
+
+// GenerateNonce generates a nonce that can be used in Validate().
+//
+// Deprecated: use GenerateNonce2.
+func GenerateNonce() string {
+	v, err := GenerateNonce2()
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 // GenerateWWWAuthenticate generates a WWW-Authenticate header.

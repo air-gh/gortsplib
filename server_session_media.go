@@ -27,7 +27,7 @@ type serverSessionMedia struct {
 	formats                map[uint8]*serverSessionFormat // record only
 	writePacketRTPInQueue  func([]byte)
 	writePacketRTCPInQueue func([]byte)
-	onPacketRTCP           func(rtcp.Packet)
+	onPacketRTCP           OnPacketRTCPFunc
 }
 
 func newServerSessionMedia(ss *ServerSession, medi *media.Media) *serverSessionMedia {
@@ -67,8 +67,8 @@ func (sm *serverSessionMedia) start() {
 				sm.ss.s.udpRTCPListener.addClient(sm.ss.author.ip(), sm.udpRTCPReadPort, sm.readRTCPUDPPlay)
 			} else {
 				// open the firewall by sending empty packets to the counterpart.
-				sm.ss.WritePacketRTP(sm.media, &rtp.Packet{Header: rtp.Header{Version: 2}})
-				sm.ss.WritePacketRTCP(sm.media, &rtcp.ReceiverReport{})
+				sm.ss.WritePacketRTP(sm.media, &rtp.Packet{Header: rtp.Header{Version: 2}}) //nolint:errcheck
+				sm.ss.WritePacketRTCP(sm.media, &rtcp.ReceiverReport{})                     //nolint:errcheck
 
 				sm.ss.s.udpRTPListener.addClient(sm.ss.author.ip(), sm.udpRTPReadPort, sm.readRTPUDPRecord)
 				sm.ss.s.udpRTCPListener.addClient(sm.ss.author.ip(), sm.udpRTCPReadPort, sm.readRTCPUDPRecord)
@@ -110,26 +110,26 @@ func (sm *serverSessionMedia) stop() {
 
 func (sm *serverSessionMedia) writePacketRTPInQueueUDP(payload []byte) {
 	atomic.AddUint64(sm.ss.bytesSent, uint64(len(payload)))
-	sm.ss.s.udpRTPListener.write(payload, sm.udpRTPWriteAddr)
+	sm.ss.s.udpRTPListener.write(payload, sm.udpRTPWriteAddr) //nolint:errcheck
 }
 
 func (sm *serverSessionMedia) writePacketRTCPInQueueUDP(payload []byte) {
 	atomic.AddUint64(sm.ss.bytesSent, uint64(len(payload)))
-	sm.ss.s.udpRTCPListener.write(payload, sm.udpRTCPWriteAddr)
+	sm.ss.s.udpRTCPListener.write(payload, sm.udpRTCPWriteAddr) //nolint:errcheck
 }
 
 func (sm *serverSessionMedia) writePacketRTPInQueueTCP(payload []byte) {
 	atomic.AddUint64(sm.ss.bytesSent, uint64(len(payload)))
 	sm.tcpRTPFrame.Payload = payload
 	sm.ss.tcpConn.nconn.SetWriteDeadline(time.Now().Add(sm.ss.s.WriteTimeout))
-	sm.ss.tcpConn.conn.WriteInterleavedFrame(sm.tcpRTPFrame, sm.tcpBuffer)
+	sm.ss.tcpConn.conn.WriteInterleavedFrame(sm.tcpRTPFrame, sm.tcpBuffer) //nolint:errcheck
 }
 
 func (sm *serverSessionMedia) writePacketRTCPInQueueTCP(payload []byte) {
 	atomic.AddUint64(sm.ss.bytesSent, uint64(len(payload)))
 	sm.tcpRTCPFrame.Payload = payload
 	sm.ss.tcpConn.nconn.SetWriteDeadline(time.Now().Add(sm.ss.s.WriteTimeout))
-	sm.ss.tcpConn.conn.WriteInterleavedFrame(sm.tcpRTCPFrame, sm.tcpBuffer)
+	sm.ss.tcpConn.conn.WriteInterleavedFrame(sm.tcpRTCPFrame, sm.tcpBuffer) //nolint:errcheck
 }
 
 func (sm *serverSessionMedia) writePacketRTP(payload []byte) {

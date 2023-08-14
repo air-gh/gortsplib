@@ -1,23 +1,27 @@
-package rtpmpeg2audio
+package rtpmpeg1audio
 
 import (
 	"crypto/rand"
 	"time"
 
-	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg2audio"
+	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg1audio"
 	"github.com/pion/rtp"
 
 	"github.com/bluenviron/gortsplib/v3/pkg/rtptime"
 )
 
 const (
-	rtpVersion = 2
+	rtpVersion            = 2
+	defaultPayloadMaxSize = 1460 // 1500 (UDP MTU) - 20 (IP header) - 8 (UDP header) - 12 (RTP header)
 )
 
-func randUint32() uint32 {
+func randUint32() (uint32, error) {
 	var b [4]byte
-	rand.Read(b[:])
-	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	_, err := rand.Read(b[:])
+	if err != nil {
+		return 0, err
+	}
+	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3]), nil
 }
 
 func lenAggregated(frames [][]byte, frame []byte) int {
@@ -54,19 +58,29 @@ type Encoder struct {
 // Init initializes the encoder.
 func (e *Encoder) Init() error {
 	if e.SSRC == nil {
-		v := randUint32()
+		v, err := randUint32()
+		if err != nil {
+			return err
+		}
 		e.SSRC = &v
 	}
 	if e.InitialSequenceNumber == nil {
-		v := uint16(randUint32())
-		e.InitialSequenceNumber = &v
+		v, err := randUint32()
+		if err != nil {
+			return err
+		}
+		v2 := uint16(v)
+		e.InitialSequenceNumber = &v2
 	}
 	if e.InitialTimestamp == nil {
-		v := randUint32()
+		v, err := randUint32()
+		if err != nil {
+			return err
+		}
 		e.InitialTimestamp = &v
 	}
 	if e.PayloadMaxSize == 0 {
-		e.PayloadMaxSize = 1460 // 1500 (UDP MTU) - 20 (IP header) - 8 (UDP header) - 12 (RTP header)
+		e.PayloadMaxSize = defaultPayloadMaxSize
 	}
 
 	e.sequenceNumber = *e.InitialSequenceNumber
@@ -92,7 +106,7 @@ func (e *Encoder) Encode(frames [][]byte, pts time.Duration) ([]*rtp.Packet, err
 				rets = append(rets, pkts...)
 
 				for _, frame := range batch {
-					var h mpeg2audio.FrameHeader
+					var h mpeg1audio.FrameHeader
 					err := h.Unmarshal(frame)
 					if err != nil {
 						return nil, err

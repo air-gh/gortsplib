@@ -12,13 +12,17 @@ import (
 )
 
 const (
-	rtpVersion = 2
+	rtpVersion            = 2
+	defaultPayloadMaxSize = 1460 // 1500 (UDP MTU) - 20 (IP header) - 8 (UDP header) - 12 (RTP header)
 )
 
-func randUint32() uint32 {
+func randUint32() (uint32, error) {
 	var b [4]byte
-	rand.Read(b[:])
-	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	_, err := rand.Read(b[:])
+	if err != nil {
+		return 0, err
+	}
+	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3]), nil
 }
 
 // Encoder is a RTP/MPEG4-audio encoder.
@@ -57,19 +61,29 @@ func (e *Encoder) Init() error {
 	}
 
 	if e.SSRC == nil {
-		v := randUint32()
+		v, err := randUint32()
+		if err != nil {
+			return err
+		}
 		e.SSRC = &v
 	}
 	if e.InitialSequenceNumber == nil {
-		v := uint16(randUint32())
-		e.InitialSequenceNumber = &v
+		v, err := randUint32()
+		if err != nil {
+			return err
+		}
+		v2 := uint16(v)
+		e.InitialSequenceNumber = &v2
 	}
 	if e.InitialTimestamp == nil {
-		v := randUint32()
+		v, err := randUint32()
+		if err != nil {
+			return err
+		}
 		e.InitialTimestamp = &v
 	}
 	if e.PayloadMaxSize == 0 {
-		e.PayloadMaxSize = 1460 // 1500 (UDP MTU) - 20 (IP header) - 8 (UDP header) - 12 (RTP header)
+		e.PayloadMaxSize = defaultPayloadMaxSize
 	}
 
 	e.sequenceNumber = *e.InitialSequenceNumber

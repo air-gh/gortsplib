@@ -69,6 +69,7 @@ func (st *ServerStream) Close() error {
 		sm.close()
 	}
 
+	// TODO: remove return value in next major version
 	return nil
 }
 
@@ -251,34 +252,48 @@ func (st *ServerStream) readerSetInactive(ss *ServerSession) {
 }
 
 // WritePacketRTP writes a RTP packet to all the readers of the stream.
-func (st *ServerStream) WritePacketRTP(medi *media.Media, pkt *rtp.Packet) {
-	st.WritePacketRTPWithNTP(medi, pkt, time.Now())
+func (st *ServerStream) WritePacketRTP(medi *media.Media, pkt *rtp.Packet) error {
+	return st.WritePacketRTPWithNTP(medi, pkt, time.Now())
 }
 
 // WritePacketRTPWithNTP writes a RTP packet to all the readers of the stream.
 // ntp is the absolute time of the packet, and is needed to generate RTCP sender reports
 // that allows the receiver to reconstruct the absolute time of the packet.
-func (st *ServerStream) WritePacketRTPWithNTP(medi *media.Media, pkt *rtp.Packet, ntp time.Time) {
+func (st *ServerStream) WritePacketRTPWithNTP(medi *media.Media, pkt *rtp.Packet, ntp time.Time) error {
+	byts := make([]byte, udpMaxPayloadSize)
+	n, err := pkt.MarshalTo(byts)
+	if err != nil {
+		return err
+	}
+	byts = byts[:n]
+
 	st.mutex.RLock()
 	defer st.mutex.RUnlock()
 
 	if st.closed {
-		return
+		return fmt.Errorf("stream is closed")
 	}
 
 	sm := st.streamMedias[medi]
-	sm.WritePacketRTPWithNTP(st, pkt, ntp)
+	sm.writePacketRTP(byts, pkt, ntp)
+	return nil
 }
 
 // WritePacketRTCP writes a RTCP packet to all the readers of the stream.
-func (st *ServerStream) WritePacketRTCP(medi *media.Media, pkt rtcp.Packet) {
+func (st *ServerStream) WritePacketRTCP(medi *media.Media, pkt rtcp.Packet) error {
+	byts, err := pkt.Marshal()
+	if err != nil {
+		return err
+	}
+
 	st.mutex.RLock()
 	defer st.mutex.RUnlock()
 
 	if st.closed {
-		return
+		return fmt.Errorf("stream is closed")
 	}
 
 	sm := st.streamMedias[medi]
-	sm.writePacketRTCP(st, pkt)
+	sm.writePacketRTCP(byts)
+	return nil
 }

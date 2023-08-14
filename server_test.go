@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -843,11 +844,15 @@ func TestServerSessionClose(t *testing.T) {
 	defer stream.Close()
 
 	var session *ServerSession
+	connClosed := make(chan struct{})
 
 	s := &Server{
 		Handler: &testServerHandler{
 			onSessionOpen: func(ctx *ServerHandlerOnSessionOpenCtx) {
 				session = ctx.Session
+			},
+			onConnClose: func(ctx *ServerHandlerOnConnCloseCtx) {
+				close(connClosed)
 			},
 			onDescribe: func(ctx *ServerHandlerOnDescribeCtx) (*base.Response, *ServerStream, error) {
 				return &base.Response{
@@ -891,6 +896,12 @@ func TestServerSessionClose(t *testing.T) {
 
 	session.Close()
 	session.Close()
+
+	select {
+	case <-connClosed:
+	case <-time.After(2 * time.Second):
+		t.Errorf("should not happen")
+	}
 
 	_, err = writeReqReadRes(conn, base.Request{
 		Method: base.Options,
@@ -1045,7 +1056,8 @@ func TestServerSessionTeardown(t *testing.T) {
 }
 
 func TestServerAuth(t *testing.T) {
-	nonce := auth.GenerateNonce()
+	nonce, err := auth.GenerateNonce2()
+	require.NoError(t, err)
 
 	s := &Server{
 		Handler: &testServerHandler{
@@ -1068,7 +1080,7 @@ func TestServerAuth(t *testing.T) {
 		RTSPAddress: "localhost:8554",
 	}
 
-	err := s.Start()
+	err = s.Start()
 	require.NoError(t, err)
 	defer s.Close()
 

@@ -24,7 +24,7 @@ type clientMedia struct {
 	tcpBuffer              []byte
 	writePacketRTPInQueue  func([]byte)
 	writePacketRTCPInQueue func([]byte)
-	onPacketRTCP           func(rtcp.Packet)
+	onPacketRTCP           OnPacketRTCPFunc
 }
 
 func newClientMedia(c *Client) *clientMedia {
@@ -70,12 +70,13 @@ func (cm *clientMedia) allocateUDPListeners(multicast bool, rtpAddress string, r
 		return nil
 	}
 
-	cm.udpRTPListener, cm.udpRTCPListener = newClientUDPListenerPair(
+	var err error
+	cm.udpRTPListener, cm.udpRTCPListener, err = newClientUDPListenerPair(
 		cm.c.ListenPacket,
 		cm.c.AnyPortEnable,
 		cm.c.WriteTimeout,
 	)
-	return nil
+	return err
 }
 
 func (cm *clientMedia) setMedia(medi *media.Media) {
@@ -157,45 +158,32 @@ func (cm *clientMedia) findFormatWithSSRC(ssrc uint32) *clientFormat {
 
 func (cm *clientMedia) writePacketRTPInQueueUDP(payload []byte) {
 	atomic.AddUint64(cm.c.BytesSent, uint64(len(payload)))
-	cm.udpRTPListener.write(payload)
+	cm.udpRTPListener.write(payload) //nolint:errcheck
 }
 
 func (cm *clientMedia) writePacketRTCPInQueueUDP(payload []byte) {
 	atomic.AddUint64(cm.c.BytesSent, uint64(len(payload)))
-	cm.udpRTCPListener.write(payload)
+	cm.udpRTCPListener.write(payload) //nolint:errcheck
 }
 
 func (cm *clientMedia) writePacketRTPInQueueTCP(payload []byte) {
 	atomic.AddUint64(cm.c.BytesSent, uint64(len(payload)))
 	cm.tcpRTPFrame.Payload = payload
 	cm.c.nconn.SetWriteDeadline(time.Now().Add(cm.c.WriteTimeout))
-	cm.c.conn.WriteInterleavedFrame(cm.tcpRTPFrame, cm.tcpBuffer)
+	cm.c.conn.WriteInterleavedFrame(cm.tcpRTPFrame, cm.tcpBuffer) //nolint:errcheck
 }
 
 func (cm *clientMedia) writePacketRTCPInQueueTCP(payload []byte) {
 	atomic.AddUint64(cm.c.BytesSent, uint64(len(payload)))
 	cm.tcpRTCPFrame.Payload = payload
 	cm.c.nconn.SetWriteDeadline(time.Now().Add(cm.c.WriteTimeout))
-	cm.c.conn.WriteInterleavedFrame(cm.tcpRTCPFrame, cm.tcpBuffer)
+	cm.c.conn.WriteInterleavedFrame(cm.tcpRTCPFrame, cm.tcpBuffer) //nolint:errcheck
 }
 
-func (cm *clientMedia) writePacketRTCP(pkt rtcp.Packet) error {
-	byts, err := pkt.Marshal()
-	if err != nil {
-		return err
-	}
-
-	select {
-	case <-cm.c.done:
-		return cm.c.closeError
-	default:
-	}
-
+func (cm *clientMedia) writePacketRTCP(byts []byte) {
 	cm.c.writer.queue(func() {
 		cm.writePacketRTCPInQueue(byts)
 	})
-
-	return nil
 }
 
 func (cm *clientMedia) readRTPTCPPlay(payload []byte) {

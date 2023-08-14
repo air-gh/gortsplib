@@ -180,6 +180,33 @@ type clientRes struct {
 	err     error
 }
 
+// ClientOnRequestFunc is the prototype of Client.OnRequest.
+type ClientOnRequestFunc func(*base.Request)
+
+// ClientOnResponseFunc is the prototype of Client.OnResponse.
+type ClientOnResponseFunc func(*base.Response)
+
+// ClientOnTransportSwitchFunc is the prototype of Client.OnTransportSwitch.
+type ClientOnTransportSwitchFunc func(err error)
+
+// ClientOnPacketLostFunc is the prototype of Client.OnPacketLost.
+type ClientOnPacketLostFunc func(err error)
+
+// ClientOnDecodeErrorFunc is the prototype of Client.OnDecodeError.
+type ClientOnDecodeErrorFunc func(err error)
+
+// OnPacketRTPFunc is the prototype of the callback passed to OnPacketRTP().
+type OnPacketRTPFunc func(*rtp.Packet)
+
+// OnPacketRTPAnyFunc is the prototype of the callback passed to OnPacketRTP(Any).
+type OnPacketRTPAnyFunc func(*media.Media, formats.Format, *rtp.Packet)
+
+// OnPacketRTCPFunc is the prototype of the callback passed to OnPacketRTCP().
+type OnPacketRTCPFunc func(rtcp.Packet)
+
+// OnPacketRTCPAnyFunc is the prototype of the callback passed to OnPacketRTCPAny().
+type OnPacketRTCPAnyFunc func(*media.Media, rtcp.Packet)
+
 // ClientLogFunc is the prototype of the log function.
 //
 // Deprecated: Log() is deprecated.
@@ -247,15 +274,15 @@ type Client struct {
 	// callbacks (all optional)
 	//
 	// called before every request.
-	OnRequest func(*base.Request)
+	OnRequest ClientOnRequestFunc
 	// called after every response.
-	OnResponse func(*base.Response)
+	OnResponse ClientOnResponseFunc
 	// called when the transport protocol changes.
-	OnTransportSwitch func(err error)
+	OnTransportSwitch ClientOnTransportSwitchFunc
 	// called when the client detects lost packets.
-	OnPacketLost func(err error)
+	OnPacketLost ClientOnPacketLostFunc
 	// called when a non-fatal decode error occurs.
-	OnDecodeError func(err error)
+	OnDecodeError ClientOnDecodeErrorFunc
 	// Deprecated: replaced by OnTransportSwitch, OnPacketLost, OnDecodeError
 	Log ClientLogFunc
 
@@ -461,6 +488,8 @@ func (c *Client) StartRecording(address string, medias media.Medias) error {
 func (c *Client) Close() error {
 	c.ctxCancel()
 	<-c.done
+
+	// TODO: remove return value in next major version
 	return c.closeError
 }
 
@@ -547,7 +576,7 @@ func (c *Client) doClose() {
 	}
 
 	if c.baseURL != nil {
-		c.do(&base.Request{
+		c.do(&base.Request{ //nolint:errcheck
 			Method: base.Teardown,
 			URL:    c.baseURL,
 		}, true, false)
@@ -1262,11 +1291,11 @@ func (c *Client) doSetup(
 			return nil, liberrors.ErrClientTransportHeaderInvalidDelivery{}
 		}
 
-		if c.state == clientStatePreRecord || !c.AnyPortEnable {
-			if thRes.ServerPorts == nil || isAnyPort(thRes.ServerPorts[0]) || isAnyPort(thRes.ServerPorts[1]) {
-				cm.close()
-				return nil, liberrors.ErrClientServerPortsNotProvided{}
-			}
+		serverPortsValid := thRes.ServerPorts != nil && !isAnyPort(thRes.ServerPorts[0]) && !isAnyPort(thRes.ServerPorts[1])
+
+		if (c.state == clientStatePreRecord || !c.AnyPortEnable) && !serverPortsValid {
+			cm.close()
+			return nil, liberrors.ErrClientServerPortsNotProvided{}
 		}
 
 		if thRes.Source != nil {
@@ -1275,7 +1304,7 @@ func (c *Client) doSetup(
 			cm.udpRTPListener.readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
 		}
 
-		if thRes.ServerPorts != nil {
+		if serverPortsValid {
 			if !c.AnyPortEnable {
 				cm.udpRTPListener.readPort = thRes.ServerPorts[0]
 			}
@@ -1292,7 +1321,7 @@ func (c *Client) doSetup(
 			cm.udpRTCPListener.readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
 		}
 
-		if thRes.ServerPorts != nil {
+		if serverPortsValid {
 			if !c.AnyPortEnable {
 				cm.udpRTCPListener.readPort = thRes.ServerPorts[1]
 			}
@@ -1451,10 +1480,10 @@ func (c *Client) doPlay(ra *headers.Range) (*base.Response, error) {
 	if *c.effectiveTransport == TransportUDP {
 		for _, ct := range c.medias {
 			byts, _ := (&rtp.Packet{Header: rtp.Header{Version: 2}}).Marshal()
-			ct.udpRTPListener.write(byts)
+			ct.udpRTPListener.write(byts) //nolint:errcheck
 
 			byts, _ = (&rtcp.ReceiverReport{}).Marshal()
-			ct.udpRTCPListener.write(byts)
+			ct.udpRTCPListener.write(byts) //nolint:errcheck
 		}
 	}
 
@@ -1608,7 +1637,7 @@ func (c *Client) Seek(ra *headers.Range) (*base.Response, error) {
 }
 
 // OnPacketRTPAny sets the callback that is called when a RTP packet is read from any setupped media.
-func (c *Client) OnPacketRTPAny(cb func(*media.Media, formats.Format, *rtp.Packet)) {
+func (c *Client) OnPacketRTPAny(cb OnPacketRTPAnyFunc) {
 	for _, cm := range c.medias {
 		cmedia := cm.media
 		for _, forma := range cm.media.Formats {
@@ -1620,7 +1649,7 @@ func (c *Client) OnPacketRTPAny(cb func(*media.Media, formats.Format, *rtp.Packe
 }
 
 // OnPacketRTCPAny sets the callback that is called when a RTCP packet is read from any setupped media.
-func (c *Client) OnPacketRTCPAny(cb func(*media.Media, rtcp.Packet)) {
+func (c *Client) OnPacketRTCPAny(cb OnPacketRTCPAnyFunc) {
 	for _, cm := range c.medias {
 		cmedia := cm.media
 		c.OnPacketRTCP(cm.media, func(pkt rtcp.Packet) {
@@ -1630,14 +1659,14 @@ func (c *Client) OnPacketRTCPAny(cb func(*media.Media, rtcp.Packet)) {
 }
 
 // OnPacketRTP sets the callback that is called when a RTP packet is read.
-func (c *Client) OnPacketRTP(medi *media.Media, forma formats.Format, cb func(*rtp.Packet)) {
+func (c *Client) OnPacketRTP(medi *media.Media, forma formats.Format, cb OnPacketRTPFunc) {
 	cm := c.medias[medi]
 	ct := cm.formats[forma.PayloadType()]
 	ct.onPacketRTP = cb
 }
 
 // OnPacketRTCP sets the callback that is called when a RTCP packet is read.
-func (c *Client) OnPacketRTCP(medi *media.Media, cb func(rtcp.Packet)) {
+func (c *Client) OnPacketRTCP(medi *media.Media, cb OnPacketRTCPFunc) {
 	cm := c.medias[medi]
 	cm.onPacketRTCP = cb
 }
@@ -1649,13 +1678,39 @@ func (c *Client) WritePacketRTP(medi *media.Media, pkt *rtp.Packet) error {
 
 // WritePacketRTPWithNTP writes a RTP packet to the media stream.
 func (c *Client) WritePacketRTPWithNTP(medi *media.Media, pkt *rtp.Packet, ntp time.Time) error {
+	byts := make([]byte, udpMaxPayloadSize)
+	n, err := pkt.MarshalTo(byts)
+	if err != nil {
+		return err
+	}
+	byts = byts[:n]
+
+	select {
+	case <-c.done:
+		return c.closeError
+	default:
+	}
+
 	cm := c.medias[medi]
 	ct := cm.formats[pkt.PayloadType]
-	return ct.writePacketRTPWithNTP(pkt, ntp)
+	ct.writePacketRTP(byts, pkt, ntp)
+	return nil
 }
 
 // WritePacketRTCP writes a RTCP packet to the media stream.
 func (c *Client) WritePacketRTCP(medi *media.Media, pkt rtcp.Packet) error {
+	byts, err := pkt.Marshal()
+	if err != nil {
+		return err
+	}
+
+	select {
+	case <-c.done:
+		return c.closeError
+	default:
+	}
+
 	cm := c.medias[medi]
-	return cm.writePacketRTCP(pkt)
+	cm.writePacketRTCP(byts)
+	return nil
 }
