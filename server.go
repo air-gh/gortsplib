@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/liberrors"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/liberrors"
 )
 
 func extractPort(address string) (int, error) {
@@ -79,17 +79,13 @@ type Server struct {
 	WriteTimeout time.Duration
 	// a TLS configuration to accept TLS (RTSPS) connections.
 	TLSConfig *tls.Config
-	// read buffer count.
-	// If greater than 1, allows to pass buffers to routines different than the one
-	// that is reading frames.
-	// It also allows to buffer routed frames and mitigate network fluctuations
-	// that are particularly relevant when using UDP.
+	// Size of the queue of outgoing packets.
 	// It defaults to 256.
-	ReadBufferCount int
-	// write buffer count.
-	// It allows to queue packets before sending them.
-	// It defaults to 256.
-	WriteBufferCount int
+	WriteQueueSize int
+	// maximum size of outgoing RTP / RTCP packets.
+	// This must be less than the UDP MTU (1472 bytes).
+	// It defaults to 1472.
+	MaxPacketSize int
 	// disable automatic RTCP sender reports.
 	DisableRTCPSenderReports bool
 
@@ -114,10 +110,11 @@ type Server struct {
 	// private
 	//
 
-	udpReceiverReportPeriod time.Duration
-	senderReportPeriod      time.Duration
-	sessionTimeout          time.Duration
-	checkStreamPeriod       time.Duration
+	timeNow              func() time.Time
+	senderReportPeriod   time.Duration
+	receiverReportPeriod time.Duration
+	sessionTimeout       time.Duration
+	checkStreamPeriod    time.Duration
 
 	ctx             context.Context
 	ctxCancel       func()
@@ -149,14 +146,15 @@ func (s *Server) Start() error {
 	if s.WriteTimeout == 0 {
 		s.WriteTimeout = 10 * time.Second
 	}
-	if s.ReadBufferCount == 0 {
-		s.ReadBufferCount = 256
+	if s.WriteQueueSize == 0 {
+		s.WriteQueueSize = 256
+	} else if (s.WriteQueueSize & (s.WriteQueueSize - 1)) != 0 {
+		return fmt.Errorf("WriteQueueSize must be a power of two")
 	}
-	if s.WriteBufferCount == 0 {
-		s.WriteBufferCount = 256
-	}
-	if (s.WriteBufferCount & (s.WriteBufferCount - 1)) != 0 {
-		return fmt.Errorf("WriteBufferCount must be a power of two")
+	if s.MaxPacketSize == 0 {
+		s.MaxPacketSize = udpMaxPayloadSize
+	} else if s.MaxPacketSize > udpMaxPayloadSize {
+		return fmt.Errorf("MaxPacketSize must be less than %d", udpMaxPayloadSize)
 	}
 
 	// system functions
@@ -168,11 +166,14 @@ func (s *Server) Start() error {
 	}
 
 	// private
-	if s.udpReceiverReportPeriod == 0 {
-		s.udpReceiverReportPeriod = 10 * time.Second
+	if s.timeNow == nil {
+		s.timeNow = time.Now
 	}
 	if s.senderReportPeriod == 0 {
 		s.senderReportPeriod = 10 * time.Second
+	}
+	if s.receiverReportPeriod == 0 {
+		s.receiverReportPeriod = 10 * time.Second
 	}
 	if s.sessionTimeout == 0 {
 		s.sessionTimeout = 1 * 60 * time.Second
@@ -318,12 +319,9 @@ func (s *Server) Start() error {
 }
 
 // Close closes all the server resources and waits for them to close.
-func (s *Server) Close() error {
+func (s *Server) Close() {
 	s.ctxCancel()
 	s.wg.Wait()
-
-	// TODO: remove return value in next major version
-	return s.closeError
 }
 
 // Wait waits until all server resources are closed.

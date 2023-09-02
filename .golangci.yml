@@ -52,11 +52,6 @@ linters-settings:
     - (github.com/datarhei/gosrt.Conn).Close
     - (github.com/datarhei/gosrt.Conn).SetReadDeadline
     - (github.com/datarhei/gosrt.Conn).SetWriteDeadline
-    - (*github.com/bluenviron/gortsplib/v3.Client).Close
-    - (*github.com/bluenviron/gortsplib/v3.Server).Close
-    - (*github.com/bluenviron/gortsplib/v3.ServerSession).Close
-    - (*github.com/bluenviron/gortsplib/v3.ServerStream).Close
-    - (*github.com/bluenviron/gortsplib/v3.ServerConn).Close
 
   govet:
     enable-all: true

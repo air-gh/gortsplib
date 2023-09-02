@@ -3,10 +3,10 @@ package main
 import (
 	"log"
 
-	"github.com/bluenviron/gortsplib/v3"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtph264"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/format/rtph264"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 	"github.com/pion/rtp"
 )
 
@@ -32,20 +32,20 @@ func main() {
 	defer c.Close()
 
 	// find published medias
-	medias, baseURL, _, err := c.Describe(u)
+	desc, _, err := c.Describe(u)
 	if err != nil {
 		panic(err)
 	}
 
 	// find the H264 media and format
-	var forma *formats.H264
-	medi := medias.FindFormat(&forma)
+	var forma *format.H264
+	medi := desc.FindFormat(&forma)
 	if medi == nil {
 		panic("media not found")
 	}
 
 	// setup RTP/H264 -> H264 decoder
-	rtpDec, err := forma.CreateDecoder2()
+	rtpDec, err := forma.CreateDecoder()
 	if err != nil {
 		panic(err)
 	}
@@ -57,16 +57,21 @@ func main() {
 	}
 
 	// setup a single media
-	_, err = c.Setup(medi, baseURL, 0, 0)
+	_, err = c.Setup(desc.BaseURL, medi, 0, 0)
 	if err != nil {
 		panic(err)
 	}
 
 	// called when a RTP packet arrives
 	c.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
+		// decode timestamp
+		pts, ok := c.PacketPTS(medi, pkt)
+		if !ok {
+			return
+		}
+
 		// extract access unit from RTP packets
-		// DecodeUntilMarker is necessary for the DTS extractor to work
-		au, pts, err := rtpDec.DecodeUntilMarker(pkt)
+		au, err := rtpDec.Decode(pkt)
 		if err != nil {
 			if err != rtph264.ErrNonStartingPacketAndNoPrevious && err != rtph264.ErrMorePacketsNeeded {
 				log.Printf("ERR: %v", err)
@@ -75,7 +80,13 @@ func main() {
 		}
 
 		// encode the access unit into MPEG-TS
-		mpegtsMuxer.encode(au, pts)
+		err = mpegtsMuxer.encode(au, pts)
+		if err != nil {
+			log.Printf("ERR: %v", err)
+			return
+		}
+
+		log.Printf("saved TS packet")
 	})
 
 	// start playing

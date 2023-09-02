@@ -4,11 +4,11 @@
 [![Lint](https://github.com/bluenviron/gortsplib/workflows/lint/badge.svg)](https://github.com/bluenviron/gortsplib/actions?query=workflow:lint)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bluenviron/gortsplib)](https://goreportcard.com/report/github.com/bluenviron/gortsplib)
 [![CodeCov](https://codecov.io/gh/bluenviron/gortsplib/branch/main/graph/badge.svg)](https://app.codecov.io/gh/bluenviron/gortsplib/branch/main)
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/bluenviron/gortsplib/v3)](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3#pkg-index)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/bluenviron/gortsplib/v4)](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4#pkg-index)
 
 RTSP 1.0 client and server library for the Go programming language, written for [MediaMTX](https://github.com/bluenviron/mediamtx).
 
-Go &ge; 1.18 is required.
+Go &ge; 1.19 is required.
 
 Features:
 
@@ -18,32 +18,29 @@ Features:
     * Read media streams from servers with the UDP, UDP-multicast or TCP transport protocol
     * Read TLS-encrypted streams (TCP only)
     * Switch transport protocol automatically
-    * Read only selected media streams
+    * Read selected media streams only
     * Pause or seek without disconnecting from the server
-    * Generate RTCP receiver reports (UDP only)
-    * Reorder incoming RTP packets (UDP only)
+    * Get PTS (relative) timestamp of incoming packets
+    * Get NTP (absolute) timestamp of incoming packets
   * Publish
     * Publish media streams to servers with the UDP or TCP transport protocol
     * Publish TLS-encrypted streams (TCP only)
     * Switch transport protocol automatically
     * Pause without disconnecting from the server
-    * Generate RTCP sender reports
 * Server
   * Handle requests from clients
-  * Sessions and connections are independent
   * Publish
     * Read media streams from clients with the UDP or TCP transport protocol
     * Read TLS-encrypted streams (TCP only)
-    * Generate RTCP receiver reports (UDP only)
-    * Reorder incoming RTP packets (UDP only)
+    * Get PTS (relative) timestamp of incoming packets
+    * Get NTP (absolute) timestamp of incoming packets
   * Read
     * Write media streams to clients with the UDP, UDP-multicast or TCP transport protocol
-    * Write TLS-encrypted streams
+    * Write TLS-encrypted streams (TCP only)
     * Compute and provide SSRC, RTP-Info to clients
-    * Generate RTCP sender reports
 * Utilities
   * Parse RTSP elements
-  * Encode/decode format-specific frames into/from RTP packets
+  * Encode/decode codec-specific frames into/from RTP packets
 
 ## Table of contents
 
@@ -57,6 +54,7 @@ Features:
 
 * [client-query](examples/client-query/main.go)
 * [client-read](examples/client-read/main.go)
+* [client-read-timestamp](examples/client-read-timestamp/main.go)
 * [client-read-options](examples/client-read-options/main.go)
 * [client-read-pause](examples/client-read-pause/main.go)
 * [client-read-republish](examples/client-read-republish/main.go)
@@ -92,44 +90,45 @@ Features:
 
 ## API Documentation
 
-https://pkg.go.dev/github.com/bluenviron/gortsplib/v3#pkg-index
+https://pkg.go.dev/github.com/bluenviron/gortsplib/v4#pkg-index
 
 ## RTP Payload Formats
 
-In RTSP, media streams are routed between server and clients by using RTP packets. In order to decode a stream, RTP packets must be converted into codec-specific frames. This conversion happens by using a RTP payload format. This library recognizes the following formats:
+In RTSP, media streams are routed between server and clients by using RTP packets. Conversion between RTP packets and codec-specific frames happens by using a payload format. This library recognizes the following payload formats:
 
 ### Video
 
 |format / codec|variant|documentation|encoder and decoder available|
 |--------------|-------|-------------|-----------------------------|
-|AV1||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#AV1)|:heavy_check_mark:|
-|VP9||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#VP9)|:heavy_check_mark:|
-|VP8||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#VP8)|:heavy_check_mark:|
-|H265||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#H265)|:heavy_check_mark:|
-|H264||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#H264)|:heavy_check_mark:|
-|MPEG-4 Video (H263, Xvid)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#MPEG4VideoES)|:heavy_check_mark:|
-|MPEG-1/2 Video||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#MPEG1Video)||
-|M-JPEG||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#MJPEG)|:heavy_check_mark:|
+|AV1||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#AV1)|:heavy_check_mark:|
+|VP9||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#VP9)|:heavy_check_mark:|
+|VP8||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#VP8)|:heavy_check_mark:|
+|H265||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#H265)|:heavy_check_mark:|
+|H264||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#H264)|:heavy_check_mark:|
+|MPEG-4 Video (H263, Xvid)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG4VideoES)|:heavy_check_mark:|
+|MPEG-1/2 Video||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG1Video)||
+|M-JPEG||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MJPEG)|:heavy_check_mark:|
 
 ### Audio
 
 |format / codec|variant|documentation|encoder and decoder available|
 |--------------|-------|-------------|-----------------------------|
-|Opus||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#Opus)|:heavy_check_mark:|
-|Vorbis||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#Vorbis)||
-|MPEG-4 Audio (AAC)|Generic (RFC3640)|[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#MPEG4AudioGeneric)|:heavy_check_mark:|
-|MPEG-4 Audio (AAC)|LATM (RFC6416)|[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#MPEG4AudioLATM)|:heavy_check_mark:|
-|MPEG-1/2 Audio (MP3)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#MPEG1Audio)|:heavy_check_mark:|
-|G726||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#G726)||
-|G722||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#G722)|:heavy_check_mark:|
-|G711 (PCMA, PCMU)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#G711)|:heavy_check_mark:|
-|LPCM||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#LPCM)|:heavy_check_mark:|
+|Opus||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#Opus)|:heavy_check_mark:|
+|Vorbis||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#Vorbis)||
+|MPEG-4 Audio (AAC)|Generic (RFC3640)|[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG4AudioGeneric)|:heavy_check_mark:|
+|MPEG-4 Audio (AAC)|LATM (RFC6416)|[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG4AudioLATM)|:heavy_check_mark:|
+|MPEG-1/2 Audio (MP3)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG1Audio)|:heavy_check_mark:|
+|Speex||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#Speex)||
+|G726||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#G726)||
+|G722||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#G722)|:heavy_check_mark:|
+|G711 (PCMA, PCMU)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#G711)|:heavy_check_mark:|
+|LPCM||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#LPCM)|:heavy_check_mark:|
 
 ### Mixed
 
 |format / codec|variant|documentation|encoder and decoder available|
 |--------------|-------|-------------|-----------------------------|
-|MPEG-TS||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v3/pkg/formats#MPEGTS)||
+|MPEG-TS||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEGTS)||
 
 ## Standards
 
@@ -148,6 +147,7 @@ In RTSP, media streams are routed between server and clients by using RTP packet
 * [RFC5215, RTP Payload Format for Vorbis Encoded Audio](https://datatracker.ietf.org/doc/html/rfc5215)
 * [RFC7587, RTP Payload Format for the Opus Speech and Audio Codec](https://datatracker.ietf.org/doc/html/rfc7587)
 * [RFC3640, RTP Payload Format for Transport of MPEG-4 Elementary Streams](https://datatracker.ietf.org/doc/html/rfc3640)
+* [RFC5574, RTP Payload Format for the Speex Codec](https://datatracker.ietf.org/doc/html/rfc5574)
 * [RTP Payload Format For AV1 (v1.0)](https://aomediacodec.github.io/av1-rtp-spec/)
 * [Codec standards](https://github.com/bluenviron/mediacommon#standards)
 * [Golang project layout](https://github.com/golang-standards/project-layout)

@@ -9,13 +9,14 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/liberrors"
 )
 
 type serverSessionMedia struct {
 	ss                     *ServerSession
-	media                  *media.Media
+	media                  *description.Media
 	tcpChannel             int
 	udpRTPReadPort         int
 	udpRTPWriteAddr        *net.UDPAddr
@@ -30,7 +31,7 @@ type serverSessionMedia struct {
 	onPacketRTCP           OnPacketRTCPFunc
 }
 
-func newServerSessionMedia(ss *ServerSession, medi *media.Media) *serverSessionMedia {
+func newServerSessionMedia(ss *ServerSession, medi *description.Media) *serverSessionMedia {
 	sm := &serverSessionMedia{
 		ss:           ss,
 		media:        medi,
@@ -93,7 +94,7 @@ func (sm *serverSessionMedia) start() {
 
 		sm.tcpRTPFrame = &base.InterleavedFrame{Channel: sm.tcpChannel}
 		sm.tcpRTCPFrame = &base.InterleavedFrame{Channel: sm.tcpChannel + 1}
-		sm.tcpBuffer = make([]byte, udpMaxPayloadSize+4)
+		sm.tcpBuffer = make([]byte, sm.ss.s.MaxPacketSize+4)
 	}
 }
 
@@ -106,6 +107,16 @@ func (sm *serverSessionMedia) stop() {
 	for _, sf := range sm.formats {
 		sf.stop()
 	}
+}
+
+func (sm *serverSessionMedia) findFormatWithSSRC(ssrc uint32) *serverSessionFormat {
+	for _, format := range sm.formats {
+		tssrc, ok := format.rtcpReceiver.SenderSSRC()
+		if ok && tssrc == ssrc {
+			return format
+		}
+	}
+	return nil
 }
 
 func (sm *serverSessionMedia) writePacketRTPInQueueUDP(payload []byte) {
@@ -132,16 +143,26 @@ func (sm *serverSessionMedia) writePacketRTCPInQueueTCP(payload []byte) {
 	sm.ss.tcpConn.conn.WriteInterleavedFrame(sm.tcpRTCPFrame, sm.tcpBuffer) //nolint:errcheck
 }
 
-func (sm *serverSessionMedia) writePacketRTP(payload []byte) {
-	sm.ss.writer.queue(func() {
+func (sm *serverSessionMedia) writePacketRTP(payload []byte) error {
+	ok := sm.ss.writer.push(func() {
 		sm.writePacketRTPInQueue(payload)
 	})
+	if !ok {
+		return liberrors.ErrServerWriteQueueFull{}
+	}
+
+	return nil
 }
 
-func (sm *serverSessionMedia) writePacketRTCP(payload []byte) {
-	sm.ss.writer.queue(func() {
+func (sm *serverSessionMedia) writePacketRTCP(payload []byte) error {
+	ok := sm.ss.writer.push(func() {
 		sm.writePacketRTCPInQueue(payload)
 	})
+	if !ok {
+		return liberrors.ErrServerWriteQueueFull{}
+	}
+
+	return nil
 }
 
 func (sm *serverSessionMedia) readRTCPUDPPlay(payload []byte) {
@@ -160,7 +181,7 @@ func (sm *serverSessionMedia) readRTCPUDPPlay(payload []byte) {
 		return
 	}
 
-	now := time.Now()
+	now := sm.ss.s.timeNow()
 	atomic.StoreInt64(sm.ss.udpLastPacketTime, now.Unix())
 
 	for _, pkt := range packets {
@@ -191,7 +212,7 @@ func (sm *serverSessionMedia) readRTPUDPRecord(payload []byte) {
 		return
 	}
 
-	now := time.Now()
+	now := sm.ss.s.timeNow()
 	atomic.StoreInt64(sm.ss.udpLastPacketTime, now.Unix())
 
 	forma.readRTPUDP(pkt, now)
@@ -213,19 +234,17 @@ func (sm *serverSessionMedia) readRTCPUDPRecord(payload []byte) {
 		return
 	}
 
-	now := time.Now()
+	now := sm.ss.s.timeNow()
 	atomic.StoreInt64(sm.ss.udpLastPacketTime, now.Unix())
 
 	for _, pkt := range packets {
 		if sr, ok := pkt.(*rtcp.SenderReport); ok {
-			format := serverFindFormatWithSSRC(sm.formats, sr.SSRC)
+			format := sm.findFormatWithSSRC(sr.SSRC)
 			if format != nil {
-				format.udpRTCPReceiver.ProcessSenderReport(sr, now)
+				format.rtcpReceiver.ProcessSenderReport(sr, now)
 			}
 		}
-	}
 
-	for _, pkt := range packets {
 		sm.onPacketRTCP(pkt)
 	}
 }
@@ -281,7 +300,16 @@ func (sm *serverSessionMedia) readRTCPTCPRecord(payload []byte) {
 		return
 	}
 
+	now := sm.ss.s.timeNow()
+
 	for _, pkt := range packets {
+		if sr, ok := pkt.(*rtcp.SenderReport); ok {
+			format := sm.findFormatWithSSRC(sr.SSRC)
+			if format != nil {
+				format.rtcpReceiver.ProcessSenderReport(sr, now)
+			}
+		}
+
 		sm.onPacketRTCP(pkt)
 	}
 }

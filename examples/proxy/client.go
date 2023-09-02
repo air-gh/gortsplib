@@ -2,13 +2,12 @@ package main
 
 import (
 	"log"
-	"sync"
 	"time"
 
-	"github.com/bluenviron/gortsplib/v3"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 	"github.com/pion/rtp"
 )
 
@@ -18,12 +17,13 @@ const (
 )
 
 type client struct {
-	mutex  sync.RWMutex
-	stream *gortsplib.ServerStream
+	s *server
 }
 
-func newClient() *client {
-	c := &client{}
+func newClient(s *server) *client {
+	c := &client{
+		s: s,
+	}
 
 	// start a separated routine
 	go c.run()
@@ -38,12 +38,6 @@ func (c *client) run() {
 
 		time.Sleep(reconnectPause)
 	}
-}
-
-func (c *client) getStream() *gortsplib.ServerStream {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-	return c.stream
 }
 
 func (c *client) read() error {
@@ -63,37 +57,24 @@ func (c *client) read() error {
 	defer rc.Close()
 
 	// find published medias
-	medias, baseURL, _, err := rc.Describe(u)
+	desc, _, err := rc.Describe(u)
 	if err != nil {
 		return err
 	}
 
 	// setup all medias
-	err = rc.SetupAll(medias, baseURL)
+	err = rc.SetupAll(desc.BaseURL, desc.Medias)
 	if err != nil {
 		return err
 	}
 
-	// create a server stream
-	stream := gortsplib.NewServerStream(medias)
-	defer stream.Close()
+	stream := c.s.setStreamReady(desc)
+	defer c.s.setStreamUnready()
 
 	log.Printf("stream is ready and can be read from the server at rtsp://localhost:8554/stream\n")
 
-	// make stream available by using getStream()
-	c.mutex.Lock()
-	c.stream = stream
-	c.mutex.Unlock()
-
-	defer func() {
-		// remove stream from getStream()
-		c.mutex.Lock()
-		c.stream = nil
-		c.mutex.Unlock()
-	}()
-
 	// called when a RTP packet arrives
-	rc.OnPacketRTPAny(func(medi *media.Media, forma formats.Format, pkt *rtp.Packet) {
+	rc.OnPacketRTPAny(func(medi *description.Media, forma format.Format, pkt *rtp.Packet) {
 		// route incoming packets to the server stream
 		stream.WritePacketRTP(medi, pkt)
 	})

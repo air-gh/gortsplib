@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/auth"
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/conn"
-	"github.com/bluenviron/gortsplib/v3/pkg/headers"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
+	"github.com/bluenviron/gortsplib/v4/pkg/auth"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/conn"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/headers"
 )
 
 var serverCert = []byte(`-----BEGIN CERTIFICATE-----
@@ -342,17 +342,21 @@ func (s *testServerErrMethodNotImplemented) OnSetup(
 func TestServerErrorMethodNotImplemented(t *testing.T) {
 	for _, ca := range []string{"outside session", "inside session"} {
 		t.Run(ca, func(t *testing.T) {
-			stream := NewServerStream(media.Medias{testH264Media})
-			defer stream.Close()
+			h := &testServerErrMethodNotImplemented{}
 
 			s := &Server{
-				Handler:     &testServerErrMethodNotImplemented{stream},
+				Handler:     h,
 				RTSPAddress: "localhost:8554",
 			}
 
 			err := s.Start()
 			require.NoError(t, err)
 			defer s.Close()
+
+			stream := NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+			defer stream.Close()
+
+			h.stream = stream
 
 			nconn, err := net.Dial("tcp", "localhost:8554")
 			require.NoError(t, err)
@@ -416,8 +420,7 @@ func TestServerErrorMethodNotImplemented(t *testing.T) {
 }
 
 func TestServerErrorTCPTwoConnOneSession(t *testing.T) {
-	stream := NewServerStream(media.Medias{testH264Media})
-	defer stream.Close()
+	var stream *ServerStream
 
 	s := &Server{
 		Handler: &testServerHandler{
@@ -448,6 +451,9 @@ func TestServerErrorTCPTwoConnOneSession(t *testing.T) {
 	err := s.Start()
 	require.NoError(t, err)
 	defer s.Close()
+
+	stream = NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+	defer stream.Close()
 
 	nconn1, err := net.Dial("tcp", "localhost:8554")
 	require.NoError(t, err)
@@ -507,8 +513,7 @@ func TestServerErrorTCPTwoConnOneSession(t *testing.T) {
 }
 
 func TestServerErrorTCPOneConnTwoSessions(t *testing.T) {
-	stream := NewServerStream(media.Medias{testH264Media})
-	defer stream.Close()
+	var stream *ServerStream
 
 	s := &Server{
 		Handler: &testServerHandler{
@@ -539,6 +544,9 @@ func TestServerErrorTCPOneConnTwoSessions(t *testing.T) {
 	err := s.Start()
 	require.NoError(t, err)
 	defer s.Close()
+
+	stream = NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+	defer stream.Close()
 
 	nconn, err := net.Dial("tcp", "localhost:8554")
 	require.NoError(t, err)
@@ -590,8 +598,7 @@ func TestServerErrorTCPOneConnTwoSessions(t *testing.T) {
 }
 
 func TestServerSetupMultipleTransports(t *testing.T) {
-	stream := NewServerStream(media.Medias{testH264Media})
-	defer stream.Close()
+	var stream *ServerStream
 
 	s := &Server{
 		Handler: &testServerHandler{
@@ -612,6 +619,9 @@ func TestServerSetupMultipleTransports(t *testing.T) {
 	err := s.Start()
 	require.NoError(t, err)
 	defer s.Close()
+
+	stream = NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+	defer stream.Close()
 
 	nconn, err := net.Dial("tcp", "localhost:8554")
 	require.NoError(t, err)
@@ -674,9 +684,7 @@ func TestServerSetupMultipleTransports(t *testing.T) {
 func TestServerGetSetParameter(t *testing.T) {
 	for _, ca := range []string{"inside session", "outside session"} {
 		t.Run(ca, func(t *testing.T) {
-			stream := NewServerStream(media.Medias{testH264Media})
-			defer stream.Close()
-
+			var stream *ServerStream
 			var params []byte
 
 			s := &Server{
@@ -722,6 +730,9 @@ func TestServerGetSetParameter(t *testing.T) {
 			err := s.Start()
 			require.NoError(t, err)
 			defer s.Close()
+
+			stream = NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+			defer stream.Close()
 
 			nconn, err := net.Dial("tcp", "localhost:8554")
 			require.NoError(t, err)
@@ -840,9 +851,7 @@ func TestServerErrorInvalidSession(t *testing.T) {
 }
 
 func TestServerSessionClose(t *testing.T) {
-	stream := NewServerStream(media.Medias{testH264Media})
-	defer stream.Close()
-
+	var stream *ServerStream
 	var session *ServerSession
 	connClosed := make(chan struct{})
 
@@ -871,6 +880,9 @@ func TestServerSessionClose(t *testing.T) {
 	err := s.Start()
 	require.NoError(t, err)
 	defer s.Close()
+
+	stream = NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+	defer stream.Close()
 
 	nconn, err := net.Dial("tcp", "localhost:8554")
 	require.NoError(t, err)
@@ -918,10 +930,8 @@ func TestServerSessionAutoClose(t *testing.T) {
 		"200", "400",
 	} {
 		t.Run(ca, func(t *testing.T) {
+			var stream *ServerStream
 			sessionClosed := make(chan struct{})
-
-			stream := NewServerStream(media.Medias{testH264Media})
-			defer stream.Close()
 
 			s := &Server{
 				Handler: &testServerHandler{
@@ -951,6 +961,9 @@ func TestServerSessionAutoClose(t *testing.T) {
 			err := s.Start()
 			require.NoError(t, err)
 			defer s.Close()
+
+			stream = NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+			defer stream.Close()
 
 			nconn, err := net.Dial("tcp", "localhost:8554")
 			require.NoError(t, err)
@@ -995,8 +1008,7 @@ func TestServerSessionAutoClose(t *testing.T) {
 }
 
 func TestServerSessionTeardown(t *testing.T) {
-	stream := NewServerStream(media.Medias{testH264Media})
-	defer stream.Close()
+	var stream *ServerStream
 
 	s := &Server{
 		Handler: &testServerHandler{
@@ -1017,6 +1029,9 @@ func TestServerSessionTeardown(t *testing.T) {
 	err := s.Start()
 	require.NoError(t, err)
 	defer s.Close()
+
+	stream = NewServerStream(s, &description.Session{Medias: []*description.Media{testH264Media}})
+	defer stream.Close()
 
 	nconn, err := net.Dial("tcp", "localhost:8554")
 	require.NoError(t, err)
@@ -1056,7 +1071,7 @@ func TestServerSessionTeardown(t *testing.T) {
 }
 
 func TestServerAuth(t *testing.T) {
-	nonce, err := auth.GenerateNonce2()
+	nonce, err := auth.GenerateNonce()
 	require.NoError(t, err)
 
 	s := &Server{
@@ -1089,7 +1104,7 @@ func TestServerAuth(t *testing.T) {
 	defer nconn.Close()
 	conn := conn.NewConn(nconn)
 
-	medias := media.Medias{testH264Media}
+	medias := []*description.Media{testH264Media}
 
 	req := base.Request{
 		Method: base.Announce,
@@ -1098,7 +1113,7 @@ func TestServerAuth(t *testing.T) {
 			"CSeq":         base.HeaderValue{"1"},
 			"Content-Type": base.HeaderValue{"application/sdp"},
 		},
-		Body: mustMarshalMedias(medias),
+		Body: mediasToSDP(medias),
 	}
 
 	res, err := writeReqReadRes(conn, req)

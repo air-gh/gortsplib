@@ -3,10 +3,10 @@ package main
 import (
 	"log"
 
-	"github.com/bluenviron/gortsplib/v3"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpvp8"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/format/rtpvp8"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 	"github.com/pion/rtp"
 )
 
@@ -32,34 +32,40 @@ func main() {
 	defer c.Close()
 
 	// find published medias
-	medias, baseURL, _, err := c.Describe(u)
+	desc, _, err := c.Describe(u)
 	if err != nil {
 		panic(err)
 	}
 
 	// find the VP8 media and format
-	var forma *formats.VP8
-	medi := medias.FindFormat(&forma)
+	var forma *format.VP8
+	medi := desc.FindFormat(&forma)
 	if medi == nil {
 		panic("media not found")
 	}
 
 	// create decoder
-	rtpDec, err := forma.CreateDecoder2()
+	rtpDec, err := forma.CreateDecoder()
 	if err != nil {
 		panic(err)
 	}
 
 	// setup a single media
-	_, err = c.Setup(medi, baseURL, 0, 0)
+	_, err = c.Setup(desc.BaseURL, medi, 0, 0)
 	if err != nil {
 		panic(err)
 	}
 
 	// called when a RTP packet arrives
 	c.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
+		// decode timestamp
+		pts, ok := c.PacketPTS(medi, pkt)
+		if !ok {
+			return
+		}
+
 		// extract VP8 frames from RTP packets
-		vf, _, err := rtpDec.Decode(pkt)
+		vf, err := rtpDec.Decode(pkt)
 		if err != nil {
 			if err != rtpvp8.ErrNonStartingPacketAndNoPrevious && err != rtpvp8.ErrMorePacketsNeeded {
 				log.Printf("ERR: %v", err)
@@ -67,7 +73,7 @@ func main() {
 			return
 		}
 
-		log.Printf("received frame of size %d\n", len(vf))
+		log.Printf("received frame with PTS %v size %d\n", pts, len(vf))
 	})
 
 	// start playing

@@ -4,9 +4,9 @@ import (
 	"log"
 	"net"
 
-	"github.com/bluenviron/gortsplib/v3"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
 	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
 )
@@ -24,7 +24,7 @@ func main() {
 	}
 	defer pc.Close()
 
-	log.Println("Waiting for a RTP/MPEG4-audio stream on UDP port 9000 - you can send one with GStreamer:\n" +
+	log.Println("Waiting for a RTP/MPEG-4 audio stream on UDP port 9000 - you can send one with GStreamer:\n" +
 		"gst-launch-1.0 audiotestsrc freq=300 ! audioconvert ! audioresample ! audio/x-raw,rate=48000" +
 		" ! avenc_aac bitrate=128000 ! rtpmp4gpay ! udpsink host=127.0.0.1 port=9000")
 
@@ -36,25 +36,27 @@ func main() {
 	}
 	log.Println("stream connected")
 
-	// create a media that contains a MPEG4-audio format
-	medi := &media.Media{
-		Type: media.TypeAudio,
-		Formats: []formats.Format{&formats.MPEG4Audio{
-			PayloadTyp: 96,
-			Config: &mpeg4audio.Config{
-				Type:         mpeg4audio.ObjectTypeAACLC,
-				SampleRate:   48000,
-				ChannelCount: 2,
-			},
-			SizeLength:       13,
-			IndexLength:      3,
-			IndexDeltaLength: 3,
+	// create a description that contains a MPEG-4 audio format
+	desc := &description.Session{
+		Medias: []*description.Media{{
+			Type: description.MediaTypeVideo,
+			Formats: []format.Format{&format.MPEG4Audio{
+				PayloadTyp: 96,
+				Config: &mpeg4audio.Config{
+					Type:         mpeg4audio.ObjectTypeAACLC,
+					SampleRate:   48000,
+					ChannelCount: 2,
+				},
+				SizeLength:       13,
+				IndexLength:      3,
+				IndexDeltaLength: 3,
+			}},
 		}},
 	}
 
-	// connect to the server and start recording the media
+	// connect to the server and start recording
 	c := gortsplib.Client{}
-	err = c.StartRecording("rtsp://localhost:8554/mystream", media.Medias{medi})
+	err = c.StartRecording("rtsp://localhost:8554/mystream", desc)
 	if err != nil {
 		panic(err)
 	}
@@ -69,7 +71,7 @@ func main() {
 		}
 
 		// route RTP packet to the server
-		err = c.WritePacketRTP(medi, &pkt)
+		err = c.WritePacketRTP(desc.Medias[0], &pkt)
 		if err != nil {
 			panic(err)
 		}

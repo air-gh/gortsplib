@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/headers"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/headers"
 )
 
 // ErrServerTerminated is an error that can be returned by a server.
@@ -250,4 +250,20 @@ type ErrServerUnexpectedFrame struct{}
 // Error implements the error interface.
 func (e ErrServerUnexpectedFrame) Error() string {
 	return "received unexpected interleaved frame"
+}
+
+// ErrServerUnexpectedResponse is an error that can be returned by a server.
+type ErrServerUnexpectedResponse struct{}
+
+// Error implements the error interface.
+func (e ErrServerUnexpectedResponse) Error() string {
+	return "received unexpected response"
+}
+
+// ErrServerWriteQueueFull is an error that can be returned by a server.
+type ErrServerWriteQueueFull struct{}
+
+// Error implements the error interface.
+func (e ErrServerWriteQueueFull) Error() string {
+	return "write queue is full"
 }

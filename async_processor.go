@@ -1,7 +1,7 @@
 package gortsplib
 
 import (
-	"github.com/bluenviron/gortsplib/v3/pkg/ringbuffer"
+	"github.com/bluenviron/gortsplib/v4/pkg/ringbuffer"
 )
 
 // this struct contains a queue that allows to detach the routine that is reading a stream
@@ -44,6 +44,6 @@ func (w *asyncProcessor) run() {
 	}
 }
 
-func (w *asyncProcessor) queue(cb func()) {
-	w.buffer.Push(cb)
+func (w *asyncProcessor) push(cb func()) bool {
+	return w.buffer.Push(cb)
 }

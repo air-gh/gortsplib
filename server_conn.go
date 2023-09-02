@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/bytecounter"
-	"github.com/bluenviron/gortsplib/v3/pkg/conn"
-	"github.com/bluenviron/gortsplib/v3/pkg/liberrors"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/bytecounter"
+	"github.com/bluenviron/gortsplib/v4/pkg/conn"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/liberrors"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 )
 
 func getSessionID(header base.Header) string {
@@ -24,20 +24,22 @@ func getSessionID(header base.Header) string {
 	return ""
 }
 
-func mediasForSDP(
-	medias media.Medias,
-	contentBase *url.URL,
-) media.Medias {
-	newMedias := make(media.Medias, len(medias))
+func serverSideDescription(d *description.Session, contentBase *url.URL) *description.Session {
+	out := &description.Session{
+		Title:     d.Title,
+		FECGroups: d.FECGroups,
+		Medias:    make([]*description.Media, len(d.Medias)),
+	}
 
-	for i, medi := range medias {
-		mc := &media.Media{
+	for i, medi := range d.Medias {
+		mc := &description.Media{
 			Type: medi.Type,
+			ID:   medi.ID,
 			// Direction: skipped for the moment
-			Formats: medi.Formats,
 			// we have to use trackID=number in order to support clients
 			// like the Grandstream GXV3500.
 			Control: "trackID=" + strconv.FormatInt(int64(i), 10),
+			Formats: medi.Formats,
 		}
 
 		// always use the absolute URL of the track as control attribute, in order
@@ -47,10 +49,10 @@ func mediasForSDP(
 		u, _ := mc.URL(contentBase)
 		mc.Control = u.String()
 
-		newMedias[i] = mc
+		out.Medias[i] = mc
 	}
 
-	return newMedias
+	return out
 }
 
 type readReq struct {
@@ -72,8 +74,8 @@ type ServerConn struct {
 	session    *ServerSession
 
 	// in
-	chHandleRequest chan readReq
-	chReadErr       chan error
+	chReadRequest   chan readReq
+	chReadError     chan error
 	chRemoveSession chan *ServerSession
 
 	// out
@@ -97,8 +99,8 @@ func newServerConn(
 		ctx:             ctx,
 		ctxCancel:       ctxCancel,
 		remoteAddr:      nconn.RemoteAddr().(*net.TCPAddr),
-		chHandleRequest: make(chan readReq),
-		chReadErr:       make(chan error),
+		chReadRequest:   make(chan readReq),
+		chReadError:     make(chan error),
 		chRemoveSession: make(chan *ServerSession),
 		done:            make(chan struct{}),
 	}
@@ -110,10 +112,8 @@ func newServerConn(
 }
 
 // Close closes the ServerConn.
-func (sc *ServerConn) Close() error {
+func (sc *ServerConn) Close() {
 	sc.ctxCancel()
-	// TODO: remove return value in next major version
-	return nil
 }
 
 // NetConn returns the underlying net.Conn.
@@ -187,10 +187,10 @@ func (sc *ServerConn) run() {
 func (sc *ServerConn) runInner() error {
 	for {
 		select {
-		case req := <-sc.chHandleRequest:
+		case req := <-sc.chReadRequest:
 			req.res <- sc.handleRequestOuter(req.req)
 
-		case err := <-sc.chReadErr:
+		case err := <-sc.chReadError:
 			return err
 
 		case ss := <-sc.chRemoveSession:
@@ -296,7 +296,7 @@ func (sc *ServerConn) handleRequestInner(req *base.Request) (*base.Response, err
 				}
 
 				if stream != nil {
-					byts, _ := mediasForSDP(stream.medias, req.URL).Marshal(multicast).Marshal()
+					byts, _ := serverSideDescription(stream.desc, req.URL).Marshal(multicast)
 					res.Body = byts
 				}
 			}
@@ -462,9 +462,9 @@ func (sc *ServerConn) removeSession(ss *ServerSession) {
 	}
 }
 
-func (sc *ServerConn) handleRequest(req readReq) error {
+func (sc *ServerConn) readRequest(req readReq) error {
 	select {
-	case sc.chHandleRequest <- req:
+	case sc.chReadRequest <- req:
 		return <-req.res
 
 	case <-sc.ctx.Done():
@@ -472,9 +472,9 @@ func (sc *ServerConn) handleRequest(req readReq) error {
 	}
 }
 
-func (sc *ServerConn) readErr(err error) {
+func (sc *ServerConn) readError(err error) {
 	select {
-	case sc.chReadErr <- err:
+	case sc.chReadError <- err:
 	case <-sc.ctx.Done():
 	}
 }

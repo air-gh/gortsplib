@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 )
 
 func mustParseURL(s string) *url.URL {
@@ -136,6 +136,21 @@ var casesRequest = []struct {
 			Body: []byte("packets_received\n" +
 				"jitter\n",
 			),
+		},
+	},
+	{
+		"server-side announce",
+		[]byte("OPTIONS * RTSP/1.0\r\n" +
+			"CSeq: 1\r\n" +
+			"User-Agent: RDIPCamera\r\n" +
+			"\r\n"),
+		Request{
+			Method: "OPTIONS",
+			URL:    nil,
+			Header: Header{
+				"CSeq":       HeaderValue{"1"},
+				"User-Agent": HeaderValue{"RDIPCamera"},
+			},
 		},
 	},
 }

@@ -1,8 +1,8 @@
 package gortsplib
 
 import (
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
 )
 
 // ServerHandler is the interface implemented by all the server handlers.
@@ -83,13 +83,12 @@ type ServerHandlerOnDescribe interface {
 
 // ServerHandlerOnAnnounceCtx is the context of OnAnnounce.
 type ServerHandlerOnAnnounceCtx struct {
-	Server  *Server
-	Session *ServerSession
-	Conn    *ServerConn
-	Request *base.Request
-	Path    string
-	Query   string
-	Medias  media.Medias
+	Session     *ServerSession
+	Conn        *ServerConn
+	Request     *base.Request
+	Path        string
+	Query       string
+	Description *description.Session
 }
 
 // ServerHandlerOnAnnounce can be implemented by a ServerHandler.
@@ -100,7 +99,6 @@ type ServerHandlerOnAnnounce interface {
 
 // ServerHandlerOnSetupCtx is the context of OnSetup.
 type ServerHandlerOnSetupCtx struct {
-	Server    *Server
 	Session   *ServerSession
 	Conn      *ServerConn
 	Request   *base.Request
@@ -194,21 +192,6 @@ type ServerHandlerOnSetParameter interface {
 	OnSetParameter(*ServerHandlerOnSetParameterCtx) (*base.Response, error)
 }
 
-// ServerHandlerOnWarningCtx is the context of OnWarning.
-//
-// Deprecated: ServerHandlerOnWarning is deprecated.
-type ServerHandlerOnWarningCtx struct {
-	Session *ServerSession
-	Error   error
-}
-
-// ServerHandlerOnWarning can be implemented by a ServerHandler.
-//
-// Deprecated: replaced by OnPacketLost, OnDecodeError.
-type ServerHandlerOnWarning interface {
-	OnWarning(*ServerHandlerOnWarningCtx)
-}
-
 // ServerHandlerOnPacketLostCtx is the context of OnPacketLost.
 type ServerHandlerOnPacketLostCtx struct {
 	Session *ServerSession
@@ -231,4 +214,16 @@ type ServerHandlerOnDecodeErrorCtx struct {
 type ServerHandlerOnDecodeError interface {
 	// called when a non-fatal decode error occurs.
 	OnDecodeError(*ServerHandlerOnDecodeErrorCtx)
+}
+
+// ServerHandlerOnStreamWriteErrorCtx is the context of OnStreamWriteError.
+type ServerHandlerOnStreamWriteErrorCtx struct {
+	Session *ServerSession
+	Error   error
+}
+
+// ServerHandlerOnStreamWriteError can be implemented by a ServerHandler.
+type ServerHandlerOnStreamWriteError interface {
+	// called when a ServerStream is unable to write packets to a session.
+	OnStreamWriteError(*ServerHandlerOnStreamWriteErrorCtx)
 }

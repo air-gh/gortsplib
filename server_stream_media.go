@@ -1,24 +1,18 @@
 package gortsplib
 
 import (
-	"time"
-
-	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
-
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
-	"github.com/bluenviron/gortsplib/v3/pkg/rtcpsender"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
 )
 
 type serverStreamMedia struct {
 	st              *ServerStream
-	media           *media.Media
+	media           *description.Media
 	trackID         int
 	formats         map[uint8]*serverStreamFormat
 	multicastWriter *serverMulticastWriter
 }
 
-func newServerStreamMedia(st *ServerStream, medi *media.Media, trackID int) *serverStreamMedia {
+func newServerStreamMedia(st *ServerStream, medi *description.Media, trackID int) *serverStreamMedia {
 	sm := &serverStreamMedia{
 		st:      st,
 		media:   medi,
@@ -27,19 +21,9 @@ func newServerStreamMedia(st *ServerStream, medi *media.Media, trackID int) *ser
 
 	sm.formats = make(map[uint8]*serverStreamFormat)
 	for _, forma := range medi.Formats {
-		tr := &serverStreamFormat{
-			format: forma,
-		}
-
-		cmedia := medi
-		tr.rtcpSender = rtcpsender.New(
-			forma.ClockRate(),
-			func(pkt rtcp.Packet) {
-				st.WritePacketRTCP(cmedia, pkt) //nolint:errcheck
-			},
-		)
-
-		sm.formats[forma.PayloadType()] = tr
+		sm.formats[forma.PayloadType()] = newServerStreamFormat(
+			sm,
+			forma)
 	}
 
 	return sm
@@ -69,36 +53,25 @@ func (sm *serverStreamMedia) allocateMulticastHandler(s *Server) error {
 	return nil
 }
 
-func (sm *serverStreamMedia) writePacketRTP(byts []byte, pkt *rtp.Packet, ntp time.Time) {
-	forma := sm.formats[pkt.PayloadType]
-
-	forma.rtcpSender.ProcessPacket(pkt, ntp, forma.format.PTSEqualsDTS(pkt))
-
+func (sm *serverStreamMedia) writePacketRTCP(byts []byte) error {
 	// send unicast
 	for r := range sm.st.activeUnicastReaders {
 		sm, ok := r.setuppedMedias[sm.media]
 		if ok {
-			sm.writePacketRTP(byts)
+			err := sm.writePacketRTCP(byts)
+			if err != nil {
+				r.onStreamWriteError(err)
+			}
 		}
 	}
 
 	// send multicast
 	if sm.multicastWriter != nil {
-		sm.multicastWriter.writePacketRTP(byts)
-	}
-}
-
-func (sm *serverStreamMedia) writePacketRTCP(byts []byte) {
-	// send unicast
-	for r := range sm.st.activeUnicastReaders {
-		sm, ok := r.setuppedMedias[sm.media]
-		if ok {
-			sm.writePacketRTCP(byts)
+		err := sm.multicastWriter.writePacketRTCP(byts)
+		if err != nil {
+			return err
 		}
 	}
 
-	// send multicast
-	if sm.multicastWriter != nil {
-		sm.multicastWriter.writePacketRTCP(byts)
-	}
+	return nil
 }

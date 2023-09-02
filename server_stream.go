@@ -8,10 +8,20 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/headers"
-	"github.com/bluenviron/gortsplib/v3/pkg/liberrors"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/headers"
+	"github.com/bluenviron/gortsplib/v4/pkg/liberrors"
 )
+
+func firstFormat(formats map[uint8]*serverStreamFormat) *serverStreamFormat {
+	var firstKey uint8
+	for key := range formats {
+		firstKey = key
+		break
+	}
+
+	return formats[firstKey]
+}
 
 // ServerStream represents a data stream.
 // This is in charge of
@@ -19,44 +29,35 @@ import (
 // - allocating multicast listeners
 // - gathering infos about the stream in order to generate SSRC and RTP-Info
 type ServerStream struct {
-	medias media.Medias
+	s    *Server
+	desc *description.Session
 
 	mutex                sync.RWMutex
-	s                    *Server
 	activeUnicastReaders map[*ServerSession]struct{}
 	readers              map[*ServerSession]struct{}
-	streamMedias         map[*media.Media]*serverStreamMedia
+	streamMedias         map[*description.Media]*serverStreamMedia
 	closed               bool
 }
 
 // NewServerStream allocates a ServerStream.
-func NewServerStream(medias media.Medias) *ServerStream {
+func NewServerStream(s *Server, desc *description.Session) *ServerStream {
 	st := &ServerStream{
-		medias:               medias,
+		s:                    s,
+		desc:                 desc,
 		activeUnicastReaders: make(map[*ServerSession]struct{}),
 		readers:              make(map[*ServerSession]struct{}),
 	}
 
-	st.streamMedias = make(map[*media.Media]*serverStreamMedia, len(medias))
-	for i, medi := range medias {
+	st.streamMedias = make(map[*description.Media]*serverStreamMedia, len(desc.Medias))
+	for i, medi := range desc.Medias {
 		st.streamMedias[medi] = newServerStreamMedia(st, medi, i)
 	}
 
 	return st
 }
 
-func (st *ServerStream) initializeServerDependentPart() {
-	if !st.s.DisableRTCPSenderReports {
-		for _, ssm := range st.streamMedias {
-			for _, tr := range ssm.formats {
-				tr.rtcpSender.Start(st.s.senderReportPeriod)
-			}
-		}
-	}
-}
-
 // Close closes a ServerStream.
-func (st *ServerStream) Close() error {
+func (st *ServerStream) Close() {
 	st.mutex.Lock()
 	st.closed = true
 	st.mutex.Unlock()
@@ -68,39 +69,30 @@ func (st *ServerStream) Close() error {
 	for _, sm := range st.streamMedias {
 		sm.close()
 	}
-
-	// TODO: remove return value in next major version
-	return nil
 }
 
-// Medias returns the medias of the stream.
-func (st *ServerStream) Medias() media.Medias {
-	return st.medias
+// Description returns the description of the stream.
+func (st *ServerStream) Description() *description.Session {
+	return st.desc
 }
 
-func (st *ServerStream) lastSSRC(medi *media.Media) (uint32, bool) {
+func (st *ServerStream) senderSSRC(medi *description.Media) (uint32, bool) {
 	st.mutex.Lock()
 	defer st.mutex.Unlock()
 
 	sm := st.streamMedias[medi]
 
-	// since lastSSRC() is used to fill SSRC inside the Transport header,
+	// senderSSRC() is used to fill SSRC inside the Transport header.
 	// if there are multiple formats inside a single media stream,
 	// do not return anything, since Transport headers don't support multiple SSRCs.
 	if len(sm.formats) > 1 {
 		return 0, false
 	}
 
-	var firstKey uint8
-	for key := range sm.formats {
-		firstKey = key
-		break
-	}
-
-	return sm.formats[firstKey].rtcpSender.LastSSRC()
+	return firstFormat(sm.formats).rtcpSender.SenderSSRC()
 }
 
-func (st *ServerStream) rtpInfoEntry(medi *media.Media, now time.Time) *headers.RTPInfoEntry {
+func (st *ServerStream) rtpInfoEntry(medi *description.Media, now time.Time) *headers.RTPInfoEntry {
 	st.mutex.Lock()
 	defer st.mutex.Unlock()
 
@@ -113,13 +105,7 @@ func (st *ServerStream) rtpInfoEntry(medi *media.Media, now time.Time) *headers.
 		return nil
 	}
 
-	var firstKey uint8
-	for key := range sm.formats {
-		firstKey = key
-		break
-	}
-
-	format := sm.formats[firstKey]
+	format := firstFormat(sm.formats)
 
 	lastSeqNum, lastTimeRTP, lastTimeNTP, ok := format.rtcpSender.LastPacketData()
 	if !ok {
@@ -157,11 +143,6 @@ func (st *ServerStream) readerAdd(
 
 	if st.closed {
 		return fmt.Errorf("stream is closed")
-	}
-
-	if st.s == nil {
-		st.s = ss.s
-		st.initializeServerDependentPart()
 	}
 
 	switch transport {
@@ -252,15 +233,14 @@ func (st *ServerStream) readerSetInactive(ss *ServerSession) {
 }
 
 // WritePacketRTP writes a RTP packet to all the readers of the stream.
-func (st *ServerStream) WritePacketRTP(medi *media.Media, pkt *rtp.Packet) error {
-	return st.WritePacketRTPWithNTP(medi, pkt, time.Now())
+func (st *ServerStream) WritePacketRTP(medi *description.Media, pkt *rtp.Packet) error {
+	return st.WritePacketRTPWithNTP(medi, pkt, st.s.timeNow())
 }
 
 // WritePacketRTPWithNTP writes a RTP packet to all the readers of the stream.
-// ntp is the absolute time of the packet, and is needed to generate RTCP sender reports
-// that allows the receiver to reconstruct the absolute time of the packet.
-func (st *ServerStream) WritePacketRTPWithNTP(medi *media.Media, pkt *rtp.Packet, ntp time.Time) error {
-	byts := make([]byte, udpMaxPayloadSize)
+// ntp is the absolute time of the packet, and is sent with periodic RTCP sender reports.
+func (st *ServerStream) WritePacketRTPWithNTP(medi *description.Media, pkt *rtp.Packet, ntp time.Time) error {
+	byts := make([]byte, st.s.MaxPacketSize)
 	n, err := pkt.MarshalTo(byts)
 	if err != nil {
 		return err
@@ -275,12 +255,12 @@ func (st *ServerStream) WritePacketRTPWithNTP(medi *media.Media, pkt *rtp.Packet
 	}
 
 	sm := st.streamMedias[medi]
-	sm.writePacketRTP(byts, pkt, ntp)
-	return nil
+	sf := sm.formats[pkt.PayloadType]
+	return sf.writePacketRTP(byts, pkt, ntp)
 }
 
 // WritePacketRTCP writes a RTCP packet to all the readers of the stream.
-func (st *ServerStream) WritePacketRTCP(medi *media.Media, pkt rtcp.Packet) error {
+func (st *ServerStream) WritePacketRTCP(medi *description.Media, pkt rtcp.Packet) error {
 	byts, err := pkt.Marshal()
 	if err != nil {
 		return err
@@ -294,6 +274,5 @@ func (st *ServerStream) WritePacketRTCP(medi *media.Media, pkt rtcp.Packet) erro
 	}
 
 	sm := st.streamMedias[medi]
-	sm.writePacketRTCP(byts)
-	return nil
+	return sm.writePacketRTCP(byts)
 }

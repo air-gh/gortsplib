@@ -3,16 +3,17 @@ package main
 import (
 	"log"
 
-	"github.com/bluenviron/gortsplib/v3"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 	"github.com/pion/rtp"
 )
 
 // This example shows how to
-// 1. connect to a RTSP server and read all medias on a path
-// 2. re-publish all medias on another path.
+// 1. connect to a RTSP server
+// 2. read all medias on a path
+// 3. re-publish all medias on another path.
 
 func main() {
 	reader := gortsplib.Client{}
@@ -31,31 +32,31 @@ func main() {
 	defer reader.Close()
 
 	// find published medias
-	medias, baseURL, _, err := reader.Describe(sourceURL)
+	desc, _, err := reader.Describe(sourceURL)
 	if err != nil {
 		panic(err)
 	}
 
-	log.Printf("republishing %d medias", len(medias))
+	log.Printf("republishing %d medias", len(desc.Medias))
 
 	// setup all medias
 	// this must be called before StartRecording(), since it overrides the control attribute.
-	err = reader.SetupAll(medias, baseURL)
+	err = reader.SetupAll(desc.BaseURL, desc.Medias)
 	if err != nil {
 		panic(err)
 	}
 
 	// connect to the server and start recording the same medias
 	publisher := gortsplib.Client{}
-	err = publisher.StartRecording("rtsp://localhost:8554/mystream2", medias)
+	err = publisher.StartRecording("rtsp://localhost:8554/mystream2", desc)
 	if err != nil {
 		panic(err)
 	}
 	defer publisher.Close()
 
 	// read RTP packets from the reader and route them to the publisher
-	reader.OnPacketRTPAny(func(medi *media.Media, forma formats.Format, pkt *rtp.Packet) {
-		publisher.WritePacketRTP(medi, pkt)
+	reader.OnPacketRTPAny(func(medi *description.Media, forma format.Format, pkt *rtp.Packet) {
+		publisher.WritePacketRTP(desc.Medias[0], pkt)
 	})
 
 	// start playing

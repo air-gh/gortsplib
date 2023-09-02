@@ -3,7 +3,7 @@ package liberrors
 import (
 	"fmt"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
 )
 
 // ErrClientTerminated is an error that can be returned by a client.
@@ -195,4 +195,72 @@ type ErrClientRTPInfoInvalid struct {
 // Error implements the error interface.
 func (e ErrClientRTPInfoInvalid) Error() string {
 	return fmt.Sprintf("invalid RTP-Info: %v", e.Err)
+}
+
+// ErrClientUnexpectedFrame is an error that can be returned by a client.
+type ErrClientUnexpectedFrame struct{}
+
+// Error implements the error interface.
+func (e ErrClientUnexpectedFrame) Error() string {
+	return "received unexpected interleaved frame"
+}
+
+// ErrClientRequestTimedOut is an error that can be returned by a client.
+type ErrClientRequestTimedOut struct{}
+
+// Error implements the error interface.
+func (e ErrClientRequestTimedOut) Error() string {
+	return "request timed out"
+}
+
+// ErrClientUnsupportedScheme is an error that can be returned by a client.
+type ErrClientUnsupportedScheme struct {
+	Scheme string
+}
+
+// Error implements the error interface.
+func (e ErrClientUnsupportedScheme) Error() string {
+	return fmt.Sprintf("unsupported scheme: %v", e.Scheme)
+}
+
+// ErrClientRTSPSTCP is an error that can be returned by a client.
+type ErrClientRTSPSTCP struct{}
+
+// Error implements the error interface.
+func (e ErrClientRTSPSTCP) Error() string {
+	return "RTSPS can be used only with TCP"
+}
+
+// ErrClientUnexpectedResponse is an error that can be returned by a client.
+type ErrClientUnexpectedResponse struct{}
+
+// Error implements the error interface.
+func (e ErrClientUnexpectedResponse) Error() string {
+	return "received unexpected response"
+}
+
+// ErrClientMissingCSeq is an error that can be returned by a client.
+type ErrClientMissingCSeq struct{}
+
+// Error implements the error interface.
+func (e ErrClientMissingCSeq) Error() string {
+	return "CSeq is missing"
+}
+
+// ErrClientUnhandledMethod is an error that can be returned by a client.
+type ErrClientUnhandledMethod struct {
+	Method base.Method
+}
+
+// Error implements the error interface.
+func (e ErrClientUnhandledMethod) Error() string {
+	return fmt.Sprintf("unhandled method: %v", e.Method)
+}
+
+// ErrClientWriteQueueFull is an error that can be returned by a client.
+type ErrClientWriteQueueFull struct{}
+
+// Error implements the error interface.
+func (e ErrClientWriteQueueFull) Error() string {
+	return "write queue is full"
 }

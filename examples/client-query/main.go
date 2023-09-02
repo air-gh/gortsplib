@@ -3,8 +3,8 @@ package main
 import (
 	"log"
 
-	"github.com/bluenviron/gortsplib/v3"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 )
 
 // This example shows how to
@@ -25,10 +25,10 @@ func main() {
 	}
 	defer c.Close()
 
-	medias, _, _, err := c.Describe(u)
+	desc, _, err := c.Describe(u)
 	if err != nil {
 		panic(err)
 	}
 
-	log.Printf("available medias: %v\n", medias)
+	log.Printf("available medias: %v\n", desc.Medias)
 }

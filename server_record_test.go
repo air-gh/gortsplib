@@ -13,15 +13,15 @@ import (
 	psdp "github.com/pion/sdp/v3"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/conn"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/headers"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
-	"github.com/bluenviron/gortsplib/v3/pkg/sdp"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/conn"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/headers"
+	"github.com/bluenviron/gortsplib/v4/pkg/sdp"
 )
 
-func doAnnounce(t *testing.T, conn *conn.Conn, u string, medias media.Medias) {
+func doAnnounce(t *testing.T, conn *conn.Conn, u string, medias []*description.Media) {
 	res, err := writeReqReadRes(conn, base.Request{
 		Method: base.Announce,
 		URL:    mustParseURL(u),
@@ -29,7 +29,7 @@ func doAnnounce(t *testing.T, conn *conn.Conn, u string, medias media.Medias) {
 			"CSeq":         base.HeaderValue{"1"},
 			"Content-Type": base.HeaderValue{"application/sdp"},
 		},
-		Body: mustMarshalMedias(medias),
+		Body: mediasToSDP(medias),
 	})
 	require.NoError(t, err)
 	require.Equal(t, base.StatusOK, res.StatusCode)
@@ -219,11 +219,12 @@ func TestServerRecordPath(t *testing.T) {
 		},
 	} {
 		t.Run(ca.name, func(t *testing.T) {
-			s := &Server{
+			var s *Server
+			s = &Server{
 				Handler: &testServerHandler{
 					onAnnounce: func(ctx *ServerHandlerOnAnnounceCtx) (*base.Response, error) {
 						// make sure that media URLs are not overridden by NewServerStream()
-						stream := NewServerStream(ctx.Medias)
+						stream := NewServerStream(s, ctx.Description)
 						defer stream.Close()
 
 						return &base.Response{
@@ -343,8 +344,7 @@ func TestServerRecordErrorSetupMediaTwice(t *testing.T) {
 	defer nconn.Close()
 	conn := conn.NewConn(nconn)
 
-	medias := media.Medias{testH264Media}
-	resetMediaControls(medias)
+	medias := []*description.Media{testH264Media}
 
 	doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -430,24 +430,23 @@ func TestServerRecordErrorRecordPartialMedias(t *testing.T) {
 	defer nconn.Close()
 	conn := conn.NewConn(nconn)
 
-	forma := &formats.Generic{
+	forma := &format.Generic{
 		PayloadTyp: 96,
 		RTPMa:      "private/90000",
 	}
 	err = forma.Init()
 	require.NoError(t, err)
 
-	medias := media.Medias{
-		&media.Media{
+	medias := []*description.Media{
+		{
 			Type:    "application",
-			Formats: []formats.Format{forma},
+			Formats: []format.Format{forma},
 		},
-		&media.Media{
+		{
 			Type:    "application",
-			Formats: []formats.Format{forma},
+			Formats: []format.Format{forma},
 		},
 	}
-	resetMediaControls(medias)
 
 	doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -520,27 +519,27 @@ func TestServerRecord(t *testing.T) {
 						}, nil, nil
 					},
 					onRecord: func(ctx *ServerHandlerOnRecordCtx) (*base.Response, error) {
-						// send RTCP packets directly to the session.
+						// queue sending of RTCP packets.
 						// these are sent after the response, only if onRecord returns StatusOK.
-						err := ctx.Session.WritePacketRTCP(ctx.Session.AnnouncedMedias()[0], &testRTCPPacket)
+						err := ctx.Session.WritePacketRTCP(ctx.Session.AnnouncedDescription().Medias[0], &testRTCPPacket)
 						require.NoError(t, err)
-						err = ctx.Session.WritePacketRTCP(ctx.Session.AnnouncedMedias()[1], &testRTCPPacket)
+						err = ctx.Session.WritePacketRTCP(ctx.Session.AnnouncedDescription().Medias[1], &testRTCPPacket)
 						require.NoError(t, err)
 
 						for i := 0; i < 2; i++ {
 							ctx.Session.OnPacketRTP(
-								ctx.Session.AnnouncedMedias()[i],
-								ctx.Session.AnnouncedMedias()[i].Formats[0],
+								ctx.Session.AnnouncedDescription().Medias[i],
+								ctx.Session.AnnouncedDescription().Medias[i].Formats[0],
 								func(pkt *rtp.Packet) {
 									require.Equal(t, &testRTPPacket, pkt)
 								})
 
 							ci := i
 							ctx.Session.OnPacketRTCP(
-								ctx.Session.AnnouncedMedias()[i],
+								ctx.Session.AnnouncedDescription().Medias[i],
 								func(pkt rtcp.Packet) {
 									require.Equal(t, &testRTCPPacket, pkt)
-									err := ctx.Session.WritePacketRTCP(ctx.Session.AnnouncedMedias()[ci], &testRTCPPacket)
+									err := ctx.Session.WritePacketRTCP(ctx.Session.AnnouncedDescription().Medias[ci], &testRTCPPacket)
 									require.NoError(t, err)
 								})
 						}
@@ -582,27 +581,26 @@ func TestServerRecord(t *testing.T) {
 
 			<-nconnOpened
 
-			medias := media.Medias{
-				&media.Media{
-					Type: media.TypeVideo,
-					Formats: []formats.Format{&formats.H264{
+			medias := []*description.Media{
+				{
+					Type: description.MediaTypeVideo,
+					Formats: []format.Format{&format.H264{
 						PayloadTyp:        96,
-						SPS:               []byte{0x01, 0x02, 0x03, 0x04},
-						PPS:               []byte{0x01, 0x02, 0x03, 0x04},
+						SPS:               testH264Media.Formats[0].(*format.H264).SPS,
+						PPS:               testH264Media.Formats[0].(*format.H264).PPS,
 						PacketizationMode: 1,
 					}},
 				},
-				&media.Media{
-					Type: media.TypeVideo,
-					Formats: []formats.Format{&formats.H264{
+				{
+					Type: description.MediaTypeVideo,
+					Formats: []format.Format{&format.H264{
 						PayloadTyp:        96,
-						SPS:               []byte{0x01, 0x02, 0x03, 0x04},
-						PPS:               []byte{0x01, 0x02, 0x03, 0x04},
+						SPS:               testH264Media.Formats[0].(*format.H264).SPS,
+						PPS:               testH264Media.Formats[0].(*format.H264).PPS,
 						PacketizationMode: 1,
 					}},
 				},
 			}
-			resetMediaControls(medias)
 
 			doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -765,8 +763,7 @@ func TestServerRecordErrorInvalidProtocol(t *testing.T) {
 	defer nconn.Close()
 	conn := conn.NewConn(nconn)
 
-	medias := media.Medias{testH264Media}
-	resetMediaControls(medias)
+	medias := []*description.Media{testH264Media}
 
 	doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -817,10 +814,10 @@ func TestServerRecordRTCPReport(t *testing.T) {
 				}, nil
 			},
 		},
-		udpReceiverReportPeriod: 1 * time.Second,
-		UDPRTPAddress:           "127.0.0.1:8000",
-		UDPRTCPAddress:          "127.0.0.1:8001",
-		RTSPAddress:             "localhost:8554",
+		UDPRTPAddress:        "127.0.0.1:8000",
+		UDPRTCPAddress:       "127.0.0.1:8001",
+		RTSPAddress:          "localhost:8554",
+		receiverReportPeriod: 500 * time.Millisecond,
 	}
 
 	err := s.Start()
@@ -832,8 +829,7 @@ func TestServerRecordRTCPReport(t *testing.T) {
 	defer nconn.Close()
 	conn := conn.NewConn(nconn)
 
-	medias := media.Medias{testH264Media}
-	resetMediaControls(medias)
+	medias := []*description.Media{testH264Media}
 
 	doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -864,7 +860,7 @@ func TestServerRecordRTCPReport(t *testing.T) {
 
 	doRecord(t, conn, "rtsp://localhost:8554/teststream", session)
 
-	byts, _ := (&rtp.Packet{
+	_, err = l1.WriteTo(mustMarshalPacketRTP(&rtp.Packet{
 		Header: rtp.Header{
 			Version:        2,
 			Marker:         true,
@@ -873,25 +869,23 @@ func TestServerRecordRTCPReport(t *testing.T) {
 			Timestamp:      54352,
 			SSRC:           753621,
 		},
-		Payload: []byte{0x01, 0x02, 0x03, 0x04},
-	}).Marshal()
-	_, err = l1.WriteTo(byts, &net.UDPAddr{
+		Payload: []byte{1, 2, 3, 4},
+	}), &net.UDPAddr{
 		IP:   net.ParseIP("127.0.0.1"),
 		Port: th.ServerPorts[0],
 	})
 	require.NoError(t, err)
 
 	// wait for the packet's SSRC to be saved
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
-	byts, _ = (&rtcp.SenderReport{
+	_, err = l2.WriteTo(mustMarshalPacketRTCP(&rtcp.SenderReport{
 		SSRC:        753621,
-		NTPTime:     0xcbddcc34999997ff,
+		NTPTime:     ntpTimeGoToRTCP(time.Date(2018, 2, 20, 19, 0, 0, 0, time.UTC)),
 		RTPTime:     54352,
 		PacketCount: 1,
 		OctetCount:  4,
-	}).Marshal()
-	_, err = l2.WriteTo(byts, &net.UDPAddr{
+	}), &net.UDPAddr{
 		IP:   net.ParseIP("127.0.0.1"),
 		Port: th.ServerPorts[1],
 	})
@@ -915,7 +909,7 @@ func TestServerRecordRTCPReport(t *testing.T) {
 			{
 				SSRC:               rr.Reports[0].SSRC,
 				LastSequenceNumber: 534,
-				LastSenderReport:   rr.Reports[0].LastSenderReport,
+				LastSenderReport:   4004511744,
 				Delay:              rr.Reports[0].Delay,
 			},
 		},
@@ -975,8 +969,7 @@ func TestServerRecordTimeout(t *testing.T) {
 			defer nconn.Close()
 			conn := conn.NewConn(nconn)
 
-			medias := media.Medias{testH264Media}
-			resetMediaControls(medias)
+			medias := []*description.Media{testH264Media}
 
 			doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -1064,8 +1057,7 @@ func TestServerRecordWithoutTeardown(t *testing.T) {
 			require.NoError(t, err)
 			conn := conn.NewConn(nconn)
 
-			medias := media.Medias{testH264Media}
-			resetMediaControls(medias)
+			medias := []*description.Media{testH264Media}
 
 			doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -1143,8 +1135,7 @@ func TestServerRecordUDPChangeConn(t *testing.T) {
 		defer nconn.Close()
 		conn := conn.NewConn(nconn)
 
-		medias := media.Medias{testH264Media}
-		resetMediaControls(medias)
+		medias := []*description.Media{testH264Media}
 
 		doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -1197,12 +1188,15 @@ func TestServerRecordDecodeErrors(t *testing.T) {
 		{"udp", "rtp invalid"},
 		{"udp", "rtcp invalid"},
 		{"udp", "rtp packets lost"},
-		{"udp", "rtp too big"},
-		{"udp", "rtcp too big"},
 		{"udp", "rtp unknown format"},
+		{"udp", "wrong ssrc"},
+		{"udp", "rtcp too big"},
+		{"udp", "rtp too big"},
 		{"tcp", "rtcp invalid"},
-		{"tcp", "rtcp too big"},
+		{"tcp", "rtp packets lost"},
 		{"tcp", "rtp unknown format"},
+		{"tcp", "wrong ssrc"},
+		{"tcp", "rtcp too big"},
 	} {
 		t.Run(ca.proto+" "+ca.name, func(t *testing.T) {
 			errorRecv := make(chan struct{})
@@ -1225,21 +1219,22 @@ func TestServerRecordDecodeErrors(t *testing.T) {
 						}, nil
 					},
 					onPacketLost: func(ctx *ServerHandlerOnPacketLostCtx) {
-						if ca.proto == "udp" && ca.name == "rtp packets lost" {
-							require.EqualError(t, ctx.Error, "69 RTP packets lost")
-						}
+						require.EqualError(t, ctx.Error, "69 RTP packets lost")
 						close(errorRecv)
 					},
 					onDecodeError: func(ctx *ServerHandlerOnDecodeErrorCtx) {
 						switch {
-						case ca.proto == "udp" && ca.name == "rtp invalid":
+						case ca.name == "rtp invalid":
 							require.EqualError(t, ctx.Error, "RTP header size insufficient: 2 < 4")
 
 						case ca.name == "rtcp invalid":
 							require.EqualError(t, ctx.Error, "rtcp: packet too short")
 
-						case ca.proto == "udp" && ca.name == "rtp too big":
-							require.EqualError(t, ctx.Error, "RTP packet is too big to be read with UDP")
+						case ca.name == "rtp unknown format":
+							require.EqualError(t, ctx.Error, "received RTP packet with unknown format: 111")
+
+						case ca.name == "wrong ssrc":
+							require.EqualError(t, ctx.Error, "received packet with wrong SSRC 456, expected 123")
 
 						case ca.proto == "udp" && ca.name == "rtcp too big":
 							require.EqualError(t, ctx.Error, "RTCP packet is too big to be read with UDP")
@@ -1247,8 +1242,11 @@ func TestServerRecordDecodeErrors(t *testing.T) {
 						case ca.proto == "tcp" && ca.name == "rtcp too big":
 							require.EqualError(t, ctx.Error, "RTCP packet size (2000) is greater than maximum allowed (1472)")
 
-						case ca.name == "rtp unknown format":
-							require.EqualError(t, ctx.Error, "received RTP packet with unknown format: 111")
+						case ca.proto == "udp" && ca.name == "rtp too big":
+							require.EqualError(t, ctx.Error, "RTP packet is too big to be read with UDP")
+
+						default:
+							t.Errorf("unexpected")
 						}
 						close(errorRecv)
 					},
@@ -1267,14 +1265,13 @@ func TestServerRecordDecodeErrors(t *testing.T) {
 			defer nconn.Close()
 			conn := conn.NewConn(nconn)
 
-			medias := media.Medias{&media.Media{
-				Type: media.TypeApplication,
-				Formats: []formats.Format{&formats.Generic{
+			medias := []*description.Media{{
+				Type: description.MediaTypeApplication,
+				Formats: []format.Format{&format.Generic{
 					PayloadTyp: 97,
 					RTPMa:      "private/90000",
 				}},
 			}}
-			resetMediaControls(medias)
 
 			doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
 
@@ -1316,47 +1313,91 @@ func TestServerRecordDecodeErrors(t *testing.T) {
 
 			doRecord(t, conn, "rtsp://localhost:8554/teststream", session)
 
+			var writeRTP func(buf []byte)
+			var writeRTCP func(byts []byte)
+
+			if ca.proto == "udp" { //nolint:dupl
+				writeRTP = func(byts []byte) {
+					_, err = l1.WriteTo(byts, &net.UDPAddr{
+						IP:   net.ParseIP("127.0.0.1"),
+						Port: resTH.ServerPorts[0],
+					})
+					require.NoError(t, err)
+				}
+
+				writeRTCP = func(byts []byte) {
+					_, err = l2.WriteTo(byts, &net.UDPAddr{
+						IP:   net.ParseIP("127.0.0.1"),
+						Port: resTH.ServerPorts[1],
+					})
+					require.NoError(t, err)
+				}
+			} else {
+				writeRTP = func(byts []byte) {
+					err = conn.WriteInterleavedFrame(&base.InterleavedFrame{
+						Channel: 0,
+						Payload: byts,
+					}, make([]byte, 2048))
+					require.NoError(t, err)
+				}
+
+				writeRTCP = func(byts []byte) {
+					err = conn.WriteInterleavedFrame(&base.InterleavedFrame{
+						Channel: 1,
+						Payload: byts,
+					}, make([]byte, 2048))
+					require.NoError(t, err)
+				}
+			}
+
 			switch { //nolint:dupl
-			case ca.proto == "udp" && ca.name == "rtp invalid":
-				_, err := l1.WriteTo([]byte{0x01, 0x02}, &net.UDPAddr{
-					IP:   net.ParseIP("127.0.0.1"),
-					Port: resTH.ServerPorts[0],
-				})
-				require.NoError(t, err)
+			case ca.name == "rtp invalid":
+				writeRTP([]byte{0x01, 0x02})
 
-			case ca.proto == "udp" && ca.name == "rtcp invalid":
-				_, err := l2.WriteTo([]byte{0x01, 0x02}, &net.UDPAddr{
-					IP:   net.ParseIP("127.0.0.1"),
-					Port: resTH.ServerPorts[1],
-				})
-				require.NoError(t, err)
+			case ca.name == "rtcp invalid":
+				writeRTCP([]byte{0x01, 0x02})
 
-			case ca.proto == "udp" && ca.name == "rtp packets lost":
-				byts, _ := rtp.Packet{
+			case ca.name == "rtcp too big":
+				writeRTCP(bytes.Repeat([]byte{0x01, 0x02}, 2000/2))
+
+			case ca.name == "rtp packets lost":
+				writeRTP(mustMarshalPacketRTP(&rtp.Packet{
 					Header: rtp.Header{
 						PayloadType:    97,
 						SequenceNumber: 30,
 					},
-				}.Marshal()
+				}))
 
-				_, err := l1.WriteTo(byts, &net.UDPAddr{
-					IP:   net.ParseIP("127.0.0.1"),
-					Port: resTH.ServerPorts[0],
-				})
-				require.NoError(t, err)
-
-				byts, _ = rtp.Packet{
+				writeRTP(mustMarshalPacketRTP(&rtp.Packet{
 					Header: rtp.Header{
 						PayloadType:    97,
 						SequenceNumber: 100,
 					},
-				}.Marshal()
+				}))
 
-				_, err = l1.WriteTo(byts, &net.UDPAddr{
-					IP:   net.ParseIP("127.0.0.1"),
-					Port: resTH.ServerPorts[0],
-				})
-				require.NoError(t, err)
+			case ca.name == "rtp unknown format":
+				writeRTP(mustMarshalPacketRTP(&rtp.Packet{
+					Header: rtp.Header{
+						PayloadType: 111,
+					},
+				}))
+
+			case ca.name == "wrong ssrc":
+				writeRTP(mustMarshalPacketRTP(&rtp.Packet{
+					Header: rtp.Header{
+						PayloadType:    97,
+						SequenceNumber: 1,
+						SSRC:           123,
+					},
+				}))
+
+				writeRTP(mustMarshalPacketRTP(&rtp.Packet{
+					Header: rtp.Header{
+						PayloadType:    97,
+						SequenceNumber: 2,
+						SSRC:           456,
+					},
+				}))
 
 			case ca.proto == "udp" && ca.name == "rtp too big":
 				_, err := l1.WriteTo(bytes.Repeat([]byte{0x01, 0x02}, 2000/2), &net.UDPAddr{
@@ -1364,56 +1405,211 @@ func TestServerRecordDecodeErrors(t *testing.T) {
 					Port: resTH.ServerPorts[0],
 				})
 				require.NoError(t, err)
-
-			case ca.proto == "udp" && ca.name == "rtcp too big":
-				_, err := l2.WriteTo(bytes.Repeat([]byte{0x01, 0x02}, 2000/2), &net.UDPAddr{
-					IP:   net.ParseIP("127.0.0.1"),
-					Port: resTH.ServerPorts[1],
-				})
-				require.NoError(t, err)
-
-			case ca.proto == "udp" && ca.name == "rtp unknown format":
-				byts, _ := rtp.Packet{
-					Header: rtp.Header{
-						PayloadType: 111,
-					},
-				}.Marshal()
-
-				_, err := l1.WriteTo(byts, &net.UDPAddr{
-					IP:   net.ParseIP("127.0.0.1"),
-					Port: resTH.ServerPorts[0],
-				})
-				require.NoError(t, err)
-
-			case ca.proto == "tcp" && ca.name == "rtcp invalid":
-				err := conn.WriteInterleavedFrame(&base.InterleavedFrame{
-					Channel: 1,
-					Payload: []byte{0x01, 0x02},
-				}, make([]byte, 2048))
-				require.NoError(t, err)
-
-			case ca.proto == "tcp" && ca.name == "rtcp too big":
-				err := conn.WriteInterleavedFrame(&base.InterleavedFrame{
-					Channel: 1,
-					Payload: bytes.Repeat([]byte{0x01, 0x02}, 2000/2),
-				}, make([]byte, 2048))
-				require.NoError(t, err)
-
-			case ca.proto == "tcp" && ca.name == "rtp unknown format":
-				byts, _ := rtp.Packet{
-					Header: rtp.Header{
-						PayloadType: 111,
-					},
-				}.Marshal()
-
-				err := conn.WriteInterleavedFrame(&base.InterleavedFrame{
-					Channel: 0,
-					Payload: byts,
-				}, make([]byte, 2048))
-				require.NoError(t, err)
 			}
 
 			<-errorRecv
 		})
 	}
+}
+
+func TestServerRecordPacketNTP(t *testing.T) {
+	recv := make(chan struct{})
+	first := false
+
+	s := &Server{
+		Handler: &testServerHandler{
+			onAnnounce: func(ctx *ServerHandlerOnAnnounceCtx) (*base.Response, error) {
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, nil
+			},
+			onSetup: func(ctx *ServerHandlerOnSetupCtx) (*base.Response, *ServerStream, error) {
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, nil, nil
+			},
+			onRecord: func(ctx *ServerHandlerOnRecordCtx) (*base.Response, error) {
+				ctx.Session.OnPacketRTPAny(func(medi *description.Media, forma format.Format, pkt *rtp.Packet) {
+					if !first {
+						first = true
+					} else {
+						ntp, ok := ctx.Session.PacketNTP(medi, pkt)
+						require.Equal(t, true, ok)
+						require.Equal(t, time.Date(2018, 2, 20, 19, 0, 1, 0, time.UTC), ntp.UTC())
+						close(recv)
+					}
+				})
+
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, nil
+			},
+		},
+		UDPRTPAddress:  "127.0.0.1:8000",
+		UDPRTCPAddress: "127.0.0.1:8001",
+		RTSPAddress:    "localhost:8554",
+	}
+
+	err := s.Start()
+	require.NoError(t, err)
+	defer s.Close()
+
+	nconn, err := net.Dial("tcp", "localhost:8554")
+	require.NoError(t, err)
+	defer nconn.Close()
+	conn := conn.NewConn(nconn)
+
+	medias := []*description.Media{testH264Media}
+
+	doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
+
+	l1, err := net.ListenPacket("udp", "localhost:34556")
+	require.NoError(t, err)
+	defer l1.Close()
+
+	l2, err := net.ListenPacket("udp", "localhost:34557")
+	require.NoError(t, err)
+	defer l2.Close()
+
+	inTH := &headers.Transport{
+		Delivery: func() *headers.TransportDelivery {
+			v := headers.TransportDeliveryUnicast
+			return &v
+		}(),
+		Mode: func() *headers.TransportMode {
+			v := headers.TransportModeRecord
+			return &v
+		}(),
+		Protocol:    headers.TransportProtocolUDP,
+		ClientPorts: &[2]int{34556, 34557},
+	}
+
+	res, th := doSetup(t, conn, "rtsp://localhost:8554/teststream/"+medias[0].Control, inTH, "")
+
+	session := readSession(t, res)
+
+	doRecord(t, conn, "rtsp://localhost:8554/teststream", session)
+
+	_, err = l1.WriteTo(mustMarshalPacketRTP(&rtp.Packet{
+		Header: rtp.Header{
+			Version:        2,
+			Marker:         true,
+			PayloadType:    96,
+			SequenceNumber: 534,
+			Timestamp:      54352,
+			SSRC:           753621,
+		},
+		Payload: []byte{1, 2, 3, 4},
+	}), &net.UDPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: th.ServerPorts[0],
+	})
+	require.NoError(t, err)
+
+	// wait for the packet's SSRC to be saved
+	time.Sleep(100 * time.Millisecond)
+
+	_, err = l2.WriteTo(mustMarshalPacketRTCP(&rtcp.SenderReport{
+		SSRC:        753621,
+		NTPTime:     ntpTimeGoToRTCP(time.Date(2018, 2, 20, 19, 0, 0, 0, time.UTC)),
+		RTPTime:     54352,
+		PacketCount: 1,
+		OctetCount:  4,
+	}), &net.UDPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: th.ServerPorts[1],
+	})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	_, err = l1.WriteTo(mustMarshalPacketRTP(&rtp.Packet{
+		Header: rtp.Header{
+			Version:        2,
+			Marker:         true,
+			PayloadType:    96,
+			SequenceNumber: 535,
+			Timestamp:      54352 + 90000,
+			SSRC:           753621,
+		},
+		Payload: []byte{1, 2, 3, 4},
+	}), &net.UDPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: th.ServerPorts[0],
+	})
+	require.NoError(t, err)
+
+	<-recv
+}
+
+func TestServerRecordPausePause(t *testing.T) {
+	s := &Server{
+		Handler: &testServerHandler{
+			onAnnounce: func(ctx *ServerHandlerOnAnnounceCtx) (*base.Response, error) {
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, nil
+			},
+			onSetup: func(ctx *ServerHandlerOnSetupCtx) (*base.Response, *ServerStream, error) {
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, nil, nil
+			},
+			onRecord: func(ctx *ServerHandlerOnRecordCtx) (*base.Response, error) {
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, nil
+			},
+			onPause: func(ctx *ServerHandlerOnPauseCtx) (*base.Response, error) {
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, nil
+			},
+		},
+		RTSPAddress:    "localhost:8554",
+		UDPRTPAddress:  "127.0.0.1:8000",
+		UDPRTCPAddress: "127.0.0.1:8001",
+	}
+
+	err := s.Start()
+	require.NoError(t, err)
+	defer s.Close()
+
+	nconn, err := net.Dial("tcp", "localhost:8554")
+	require.NoError(t, err)
+	defer nconn.Close()
+	conn := conn.NewConn(nconn)
+
+	medias := []*description.Media{{
+		Type: description.MediaTypeApplication,
+		Formats: []format.Format{&format.Generic{
+			PayloadTyp: 97,
+			RTPMa:      "private/90000",
+		}},
+	}}
+
+	doAnnounce(t, conn, "rtsp://localhost:8554/teststream", medias)
+
+	inTH := &headers.Transport{
+		Delivery: func() *headers.TransportDelivery {
+			v := headers.TransportDeliveryUnicast
+			return &v
+		}(),
+		Mode: func() *headers.TransportMode {
+			v := headers.TransportModeRecord
+			return &v
+		}(),
+		Protocol:    headers.TransportProtocolUDP,
+		ClientPorts: &[2]int{35466, 35467},
+	}
+
+	res, _ := doSetup(t, conn, "rtsp://localhost:8554/teststream/"+medias[0].Control, inTH, "")
+
+	session := readSession(t, res)
+
+	doRecord(t, conn, "rtsp://localhost:8554/teststream", session)
+
+	doPause(t, conn, "rtsp://localhost:8554/teststream", session)
+
+	doPause(t, conn, "rtsp://localhost:8554/teststream", session)
 }

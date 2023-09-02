@@ -7,22 +7,22 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/rtcpreceiver"
-	"github.com/bluenviron/gortsplib/v3/pkg/rtplossdetector"
-	"github.com/bluenviron/gortsplib/v3/pkg/rtpreorderer"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/rtcpreceiver"
+	"github.com/bluenviron/gortsplib/v4/pkg/rtplossdetector"
+	"github.com/bluenviron/gortsplib/v4/pkg/rtpreorderer"
 )
 
 type serverSessionFormat struct {
 	sm              *serverSessionMedia
-	format          formats.Format
+	format          format.Format
 	udpReorderer    *rtpreorderer.Reorderer
 	tcpLossDetector *rtplossdetector.LossDetector
-	udpRTCPReceiver *rtcpreceiver.RTCPReceiver
+	rtcpReceiver    *rtcpreceiver.RTCPReceiver
 	onPacketRTP     OnPacketRTPFunc
 }
 
-func newServerSessionFormat(sm *serverSessionMedia, forma formats.Format) *serverSessionFormat {
+func newServerSessionFormat(sm *serverSessionMedia, forma format.Format) *serverSessionFormat {
 	return &serverSessionFormat{
 		sm:          sm,
 		format:      forma,
@@ -34,27 +34,31 @@ func (sf *serverSessionFormat) start() {
 	if sf.sm.ss.state != ServerSessionStatePlay {
 		if *sf.sm.ss.setuppedTransport == TransportUDP || *sf.sm.ss.setuppedTransport == TransportUDPMulticast {
 			sf.udpReorderer = rtpreorderer.New()
-			var err error
-			sf.udpRTCPReceiver, err = rtcpreceiver.New(
-				sf.sm.ss.s.udpReceiverReportPeriod,
-				nil,
-				sf.format.ClockRate(),
-				func(pkt rtcp.Packet) {
-					sf.sm.ss.WritePacketRTCP(sf.sm.media, pkt) //nolint:errcheck
-				})
-			if err != nil {
-				panic(err)
-			}
 		} else {
 			sf.tcpLossDetector = rtplossdetector.New()
+		}
+
+		var err error
+		sf.rtcpReceiver, err = rtcpreceiver.New(
+			sf.format.ClockRate(),
+			nil,
+			sf.sm.ss.s.receiverReportPeriod,
+			sf.sm.ss.s.timeNow,
+			func(pkt rtcp.Packet) {
+				if *sf.sm.ss.setuppedTransport == TransportUDP || *sf.sm.ss.setuppedTransport == TransportUDPMulticast {
+					sf.sm.ss.WritePacketRTCP(sf.sm.media, pkt) //nolint:errcheck
+				}
+			})
+		if err != nil {
+			panic(err)
 		}
 	}
 }
 
 func (sf *serverSessionFormat) stop() {
-	if sf.udpRTCPReceiver != nil {
-		sf.udpRTCPReceiver.Close()
-		sf.udpRTCPReceiver = nil
+	if sf.rtcpReceiver != nil {
+		sf.rtcpReceiver.Close()
+		sf.rtcpReceiver = nil
 	}
 }
 
@@ -73,7 +77,12 @@ func (sf *serverSessionFormat) readRTPUDP(pkt *rtp.Packet, now time.Time) {
 	}
 
 	for _, pkt := range packets {
-		sf.udpRTCPReceiver.ProcessPacket(pkt, now, sf.format.PTSEqualsDTS(pkt))
+		err := sf.rtcpReceiver.ProcessPacket(pkt, now, sf.format.PTSEqualsDTS(pkt))
+		if err != nil {
+			sf.sm.ss.onDecodeError(err)
+			continue
+		}
+
 		sf.onPacketRTP(pkt)
 	}
 }
@@ -90,6 +99,14 @@ func (sf *serverSessionFormat) readRTPTCP(pkt *rtp.Packet) {
 				return "packets"
 			}()))
 		// do not return
+	}
+
+	now := sf.sm.ss.s.timeNow()
+
+	err := sf.rtcpReceiver.ProcessPacket(pkt, now, sf.format.PTSEqualsDTS(pkt))
+	if err != nil {
+		sf.sm.ss.onDecodeError(err)
+		return
 	}
 
 	sf.onPacketRTP(pkt)

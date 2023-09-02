@@ -5,9 +5,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/headers"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/headers"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 )
 
 func mustParseURL(s string) *url.URL {
@@ -47,7 +47,7 @@ func TestAuth(t *testing.T) {
 			}
 
 			t.Run(c1.name+"_"+conf, func(t *testing.T) {
-				nonce, err := GenerateNonce2()
+				nonce, err := GenerateNonce()
 				require.NoError(t, err)
 
 				se, err := NewSender(
@@ -105,7 +105,7 @@ func TestAuthVLC(t *testing.T) {
 			"rtsp://myhost/mypath/test?testing/trackID=0",
 		},
 	} {
-		nonce, err := GenerateNonce2()
+		nonce, err := GenerateNonce()
 		require.NoError(t, err)
 
 		se, err := NewSender(

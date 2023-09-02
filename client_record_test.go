@@ -3,8 +3,10 @@ package gortsplib
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,21 +14,28 @@ import (
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bluenviron/gortsplib/v3/pkg/base"
-	"github.com/bluenviron/gortsplib/v3/pkg/conn"
-	"github.com/bluenviron/gortsplib/v3/pkg/formats"
-	"github.com/bluenviron/gortsplib/v3/pkg/headers"
-	"github.com/bluenviron/gortsplib/v3/pkg/media"
-	"github.com/bluenviron/gortsplib/v3/pkg/sdp"
-	"github.com/bluenviron/gortsplib/v3/pkg/url"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
+	"github.com/bluenviron/gortsplib/v4/pkg/conn"
+	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/headers"
+	"github.com/bluenviron/gortsplib/v4/pkg/sdp"
+	"github.com/bluenviron/gortsplib/v4/pkg/url"
 )
 
-var testH264Media = &media.Media{
-	Type: media.TypeVideo,
-	Formats: []formats.Format{&formats.H264{
-		PayloadTyp:        96,
-		SPS:               []byte{0x01, 0x02, 0x03, 0x04},
-		PPS:               []byte{0x01, 0x02, 0x03, 0x04},
+var testH264Media = &description.Media{
+	Type: description.MediaTypeVideo,
+	Formats: []format.Format{&format.H264{
+		PayloadTyp: 96,
+		SPS: []byte{
+			0x67, 0x42, 0xc0, 0x28, 0xd9, 0x00, 0x78, 0x02,
+			0x27, 0xe5, 0x84, 0x00, 0x00, 0x03, 0x00, 0x04,
+			0x00, 0x00, 0x03, 0x00, 0xf0, 0x3c, 0x60, 0xc9,
+			0x20,
+		},
+		PPS: []byte{
+			0x44, 0x01, 0xc0, 0x25, 0x2f, 0x05, 0x32, 0x40,
+		},
 		PacketizationMode: 1,
 	}},
 }
@@ -38,13 +47,10 @@ var testRTPPacket = rtp.Packet{
 		CSRC:        []uint32{},
 		SSRC:        0x38F27A2F,
 	},
-	Payload: []byte{0x01, 0x02, 0x03, 0x04},
+	Payload: []byte{1, 2, 3, 4},
 }
 
-var testRTPPacketMarshaled = func() []byte {
-	byts, _ := testRTPPacket.Marshal()
-	return byts
-}()
+var testRTPPacketMarshaled = mustMarshalPacketRTP(&testRTPPacket)
 
 var testRTCPPacket = rtcp.SourceDescription{
 	Chunks: []rtcp.SourceDescriptionChunk{
@@ -60,12 +66,14 @@ var testRTCPPacket = rtcp.SourceDescription{
 	},
 }
 
-var testRTCPPacketMarshaled = func() []byte {
-	byts, _ := testRTCPPacket.Marshal()
-	return byts
-}()
+var testRTCPPacketMarshaled = mustMarshalPacketRTCP(&testRTCPPacket)
 
-func record(c *Client, ur string, medias media.Medias, cb func(*media.Media, rtcp.Packet)) error {
+func ntpTimeGoToRTCP(v time.Time) uint64 {
+	s := uint64(v.UnixNano()) + 2208988800*1000000000
+	return (s/1000000000)<<32 | (s % 1000000000)
+}
+
+func record(c *Client, ur string, medias []*description.Media, cb func(*description.Media, rtcp.Packet)) error {
 	u, err := url.Parse(ur)
 	if err != nil {
 		return err
@@ -76,13 +84,13 @@ func record(c *Client, ur string, medias media.Medias, cb func(*media.Media, rtc
 		return err
 	}
 
-	_, err = c.Announce(u, medias)
+	_, err = c.Announce(u, &description.Session{Medias: medias})
 	if err != nil {
 		c.Close()
 		return err
 	}
 
-	err = c.SetupAll(medias, u)
+	err = c.SetupAll(u, medias)
 	if err != nil {
 		c.Close()
 		return err
@@ -99,6 +107,23 @@ func record(c *Client, ur string, medias media.Medias, cb func(*media.Media, rtc
 	}
 
 	return nil
+}
+
+func readRequestIgnoreFrames(c *conn.Conn) (*base.Request, error) {
+	for {
+		what, err := c.Read()
+		if err != nil {
+			return nil, err
+		}
+
+		switch what := what.(type) {
+		case *base.InterleavedFrame:
+		case *base.Request:
+			return what, nil
+		case *base.Response:
+			return nil, fmt.Errorf("unexpected response")
+		}
+	}
 }
 
 func TestClientRecordSerial(t *testing.T) {
@@ -285,10 +310,10 @@ func TestClientRecordSerial(t *testing.T) {
 			}
 
 			medi := testH264Media
-			medias := media.Medias{medi}
+			medias := []*description.Media{medi}
 
 			err = record(&c, scheme+"://localhost:8554/teststream", medias,
-				func(medi *media.Media, pkt rtcp.Packet) {
+				func(medi *description.Media, pkt rtcp.Packet) {
 					require.Equal(t, &testRTCPPacket, pkt)
 					close(recvDone)
 				})
@@ -412,7 +437,7 @@ func TestClientRecordParallel(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				req, err = conn.ReadRequestIgnoreFrames()
+				req, err = readRequestIgnoreFrames(conn)
 				require.NoError(t, err)
 				require.Equal(t, base.Teardown, req.Method)
 
@@ -440,7 +465,7 @@ func TestClientRecordParallel(t *testing.T) {
 			defer func() { <-writerDone }()
 
 			medi := testH264Media
-			medias := media.Medias{medi}
+			medias := []*description.Media{medi}
 
 			err = record(&c, scheme+"://localhost:8554/teststream", medias, nil)
 			require.NoError(t, err)
@@ -552,7 +577,7 @@ func TestClientRecordPauseSerial(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				req, err = conn.ReadRequestIgnoreFrames()
+				req, err = readRequestIgnoreFrames(conn)
 				require.NoError(t, err)
 				require.Equal(t, base.Pause, req.Method)
 
@@ -570,7 +595,7 @@ func TestClientRecordPauseSerial(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				req, err = conn.ReadRequestIgnoreFrames()
+				req, err = readRequestIgnoreFrames(conn)
 				require.NoError(t, err)
 				require.Equal(t, base.Teardown, req.Method)
 
@@ -592,7 +617,7 @@ func TestClientRecordPauseSerial(t *testing.T) {
 			}
 
 			medi := testH264Media
-			medias := media.Medias{medi}
+			medias := []*description.Media{medi}
 
 			err = record(&c, "rtsp://localhost:8554/teststream", medias, nil)
 			require.NoError(t, err)
@@ -700,7 +725,7 @@ func TestClientRecordPauseParallel(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				req, err = conn.ReadRequestIgnoreFrames()
+				req, err = readRequestIgnoreFrames(conn)
 				require.NoError(t, err)
 				require.Equal(t, base.Pause, req.Method)
 
@@ -722,7 +747,7 @@ func TestClientRecordPauseParallel(t *testing.T) {
 			}
 
 			medi := testH264Media
-			medias := media.Medias{medi}
+			medias := []*description.Media{medi}
 
 			err = record(&c, "rtsp://localhost:8554/teststream", medias, nil)
 			require.NoError(t, err)
@@ -757,6 +782,8 @@ func TestClientRecordAutomaticProtocol(t *testing.T) {
 	l, err := net.Listen("tcp", "localhost:8554")
 	require.NoError(t, err)
 	defer l.Close()
+
+	recv := make(chan struct{})
 
 	serverDone := make(chan struct{})
 	defer func() { <-serverDone }()
@@ -848,6 +875,8 @@ func TestClientRecordAutomaticProtocol(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, testRTPPacket, pkt)
 
+		close(recv)
+
 		req, err = conn.ReadRequest()
 		require.NoError(t, err)
 		require.Equal(t, base.Teardown, req.Method)
@@ -861,7 +890,7 @@ func TestClientRecordAutomaticProtocol(t *testing.T) {
 	c := Client{}
 
 	medi := testH264Media
-	medias := media.Medias{medi}
+	medias := []*description.Media{medi}
 
 	err = record(&c, "rtsp://localhost:8554/teststream", medias, nil)
 	require.NoError(t, err)
@@ -869,6 +898,8 @@ func TestClientRecordAutomaticProtocol(t *testing.T) {
 
 	err = c.WritePacketRTP(medi, &testRTPPacket)
 	require.NoError(t, err)
+
+	<-recv
 }
 
 func TestClientRecordDecodeErrors(t *testing.T) {
@@ -1041,7 +1072,7 @@ func TestClientRecordDecodeErrors(t *testing.T) {
 				},
 			}
 
-			medias := media.Medias{testH264Media}
+			medias := []*description.Media{testH264Media}
 
 			err = record(&c, "rtsp://localhost:8554/stream", medias, nil)
 			require.NoError(t, err)
@@ -1168,10 +1199,10 @@ func TestClientRecordRTCPReport(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, &rtcp.SenderReport{
 					SSRC:        0x38F27A2F,
-					NTPTime:     packets[0].(*rtcp.SenderReport).NTPTime,
-					RTPTime:     packets[0].(*rtcp.SenderReport).RTPTime,
-					PacketCount: 2,
-					OctetCount:  2,
+					NTPTime:     ntpTimeGoToRTCP(time.Date(1996, 2, 13, 14, 33, 5, 0, time.UTC)),
+					RTPTime:     1300000 + 60*90000,
+					PacketCount: 1,
+					OctetCount:  1,
 				}, packets[0])
 
 				close(reportReceived)
@@ -1186,6 +1217,9 @@ func TestClientRecordRTCPReport(t *testing.T) {
 				require.NoError(t, err)
 			}()
 
+			var curTime time.Time
+			var curTimeMutex sync.Mutex
+
 			c := Client{
 				Transport: func() *Transport {
 					if ca == "udp" {
@@ -1195,27 +1229,42 @@ func TestClientRecordRTCPReport(t *testing.T) {
 					v := TransportTCP
 					return &v
 				}(),
-				senderReportPeriod: 500 * time.Millisecond,
+				timeNow: func() time.Time {
+					curTimeMutex.Lock()
+					defer curTimeMutex.Unlock()
+					return curTime
+				},
+				senderReportPeriod: 100 * time.Millisecond,
 			}
 
 			medi := testH264Media
-			medias := media.Medias{medi}
+			medias := []*description.Media{medi}
 
 			err = record(&c, "rtsp://localhost:8554/teststream", medias, nil)
 			require.NoError(t, err)
 			defer c.Close()
 
-			for i := 0; i < 2; i++ {
-				err = c.WritePacketRTP(medi, &rtp.Packet{
+			curTimeMutex.Lock()
+			curTime = time.Date(2013, 6, 10, 1, 0, 0, 0, time.UTC)
+			curTimeMutex.Unlock()
+
+			err = c.WritePacketRTPWithNTP(
+				medi,
+				&rtp.Packet{
 					Header: rtp.Header{
 						Version:     2,
 						PayloadType: 96,
 						SSRC:        0x38F27A2F,
+						Timestamp:   1300000,
 					},
 					Payload: []byte{0x05}, // IDR
-				})
-				require.NoError(t, err)
-			}
+				},
+				time.Date(1996, 2, 13, 14, 32, 5, 0, time.UTC))
+			require.NoError(t, err)
+
+			curTimeMutex.Lock()
+			curTime = time.Date(2013, 6, 10, 1, 1, 0, 0, time.UTC)
+			curTimeMutex.Unlock()
 
 			<-reportReceived
 		})
@@ -1327,10 +1376,10 @@ func TestClientRecordIgnoreTCPRTPPackets(t *testing.T) {
 		}(),
 	}
 
-	medias := media.Medias{testH264Media}
+	medias := []*description.Media{testH264Media}
 
 	err = record(&c, "rtsp://localhost:8554/teststream", medias,
-		func(medi *media.Media, pkt rtcp.Packet) {
+		func(medi *description.Media, pkt rtcp.Packet) {
 			close(rtcpReceived)
 		})
 	require.NoError(t, err)

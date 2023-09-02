@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"log"
 	"os"
 	"time"
 
@@ -19,13 +18,11 @@ type mpegtsMuxer struct {
 	sps []byte
 	pps []byte
 
-	f                *os.File
-	b                *bufio.Writer
-	w                *mpegts.Writer
-	track            *mpegts.Track
-	dtsExtractor     *h264.DTSExtractor
-	firstIDRReceived bool
-	startDTS         time.Duration
+	f            *os.File
+	b            *bufio.Writer
+	w            *mpegts.Writer
+	track        *mpegts.Track
+	dtsExtractor *h264.DTSExtractor
 }
 
 // newMPEGTSMuxer allocates a mpegtsMuxer.
@@ -58,7 +55,7 @@ func (e *mpegtsMuxer) close() {
 	e.f.Close()
 }
 
-// encode encodes H264 NALUs into MPEG-TS.
+// encode encodes a H264 access unit into MPEG-TS.
 func (e *mpegtsMuxer) encode(au [][]byte, pts time.Duration) error {
 	// prepend an AUD. This is required by some players
 	filteredNALUs := [][]byte{
@@ -94,7 +91,7 @@ func (e *mpegtsMuxer) encode(au [][]byte, pts time.Duration) error {
 
 	au = filteredNALUs
 
-	if !nonIDRPresent && !idrPresent {
+	if len(au) <= 1 || (!nonIDRPresent && !idrPresent) {
 		return nil
 	}
 
@@ -105,42 +102,20 @@ func (e *mpegtsMuxer) encode(au [][]byte, pts time.Duration) error {
 
 	var dts time.Duration
 
-	if !e.firstIDRReceived {
+	if e.dtsExtractor == nil {
 		// skip samples silently until we find one with a IDR
 		if !idrPresent {
 			return nil
 		}
-
-		e.firstIDRReceived = true
 		e.dtsExtractor = h264.NewDTSExtractor()
-
-		var err error
-		dts, err = e.dtsExtractor.Extract(au, pts)
-		if err != nil {
-			return err
-		}
-
-		e.startDTS = dts
-		dts = 0
-		pts -= e.startDTS
-
-	} else {
-		var err error
-		dts, err = e.dtsExtractor.Extract(au, pts)
-		if err != nil {
-			return err
-		}
-
-		dts -= e.startDTS
-		pts -= e.startDTS
 	}
 
-	// encode into MPEG-TS
-	err := e.w.WriteH26x(e.track, durationGoToMPEGTS(pts), durationGoToMPEGTS(dts), idrPresent, au)
+	var err error
+	dts, err = e.dtsExtractor.Extract(au, pts)
 	if err != nil {
 		return err
 	}
 
-	log.Println("wrote TS packet")
-	return nil
+	// encode into MPEG-TS
+	return e.w.WriteH26x(e.track, durationGoToMPEGTS(pts), durationGoToMPEGTS(dts), idrPresent, au)
 }
