@@ -264,10 +264,14 @@ type Client struct {
 	//
 	// callbacks (all optional)
 	//
-	// called before every request.
+	// called when sending a request to the server.
 	OnRequest ClientOnRequestFunc
-	// called after every response.
+	// called when receiving a response from the server.
 	OnResponse ClientOnResponseFunc
+	// called when receiving a request from the server.
+	OnServerRequest ClientOnRequestFunc
+	// called when sending a response to the server.
+	OnServerResponse ClientOnResponseFunc
 	// called when the transport protocol changes.
 	OnTransportSwitch ClientOnTransportSwitchFunc
 	// called when the client detects lost packets.
@@ -283,7 +287,6 @@ type Client struct {
 	senderReportPeriod   time.Duration
 	receiverReportPeriod time.Duration
 	checkTimeoutPeriod   time.Duration
-	keepalivePeriod      time.Duration
 
 	connURL              *url.URL
 	ctx                  context.Context
@@ -305,6 +308,7 @@ type Client struct {
 	checkTimeoutTimer    *time.Timer
 	checkTimeoutInitial  bool
 	tcpLastFrameTime     *int64
+	keepalivePeriod      time.Duration
 	keepaliveTimer       *time.Timer
 	closeError           error
 	writer               asyncProcessor
@@ -377,6 +381,14 @@ func (c *Client) Start(scheme string, host string) error {
 		c.OnResponse = func(*base.Response) {
 		}
 	}
+	if c.OnServerRequest == nil {
+		c.OnServerRequest = func(*base.Request) {
+		}
+	}
+	if c.OnServerResponse == nil {
+		c.OnServerResponse = func(*base.Response) {
+		}
+	}
 	if c.OnTransportSwitch == nil {
 		c.OnTransportSwitch = func(err error) {
 			log.Println(err.Error())
@@ -407,9 +419,6 @@ func (c *Client) Start(scheme string, host string) error {
 	if c.checkTimeoutPeriod == 0 {
 		c.checkTimeoutPeriod = 1 * time.Second
 	}
-	if c.keepalivePeriod == 0 {
-		c.keepalivePeriod = 30 * time.Second
-	}
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 
@@ -420,6 +429,7 @@ func (c *Client) Start(scheme string, host string) error {
 	c.ctx = ctx
 	c.ctxCancel = ctxCancel
 	c.checkTimeoutTimer = emptyTimer()
+	c.keepalivePeriod = 30 * time.Second
 	c.keepaliveTimer = emptyTimer()
 	c.chOptions = make(chan optionsReq)
 	c.chDescribe = make(chan describeReq)
@@ -571,8 +581,9 @@ func (c *Client) runInner() error {
 			c.reader = nil
 			return err
 
-		case <-c.chReadResponse:
-			return liberrors.ErrClientUnexpectedResponse{}
+		case res := <-c.chReadResponse:
+			c.OnResponse(res)
+			// these are responses to keepalives, ignore them.
 
 		case req := <-c.chReadRequest:
 			err := c.handleServerRequest(req)
@@ -586,10 +597,13 @@ func (c *Client) runInner() error {
 	}
 }
 
-func (c *Client) waitResponse() (*base.Response, error) {
+func (c *Client) waitResponse(requestCseqStr string) (*base.Response, error) {
+	t := time.NewTimer(c.ReadTimeout)
+	defer t.Stop()
+
 	for {
 		select {
-		case <-time.After(c.ReadTimeout):
+		case <-t.C:
 			return nil, liberrors.ErrClientRequestTimedOut{}
 
 		case err := <-c.chReadError:
@@ -597,7 +611,12 @@ func (c *Client) waitResponse() (*base.Response, error) {
 			return nil, err
 
 		case res := <-c.chReadResponse:
-			return res, nil
+			c.OnResponse(res)
+
+			// accept response if CSeq equals request CSeq, or if CSeq is not present
+			if cseq, ok := res.Header["CSeq"]; !ok || len(cseq) != 1 || cseq[0] == requestCseqStr {
+				return res, nil
+			}
 
 		case req := <-c.chReadRequest:
 			err := c.handleServerRequest(req)
@@ -612,21 +631,26 @@ func (c *Client) waitResponse() (*base.Response, error) {
 }
 
 func (c *Client) handleServerRequest(req *base.Request) error {
+	c.OnServerRequest(req)
+
 	if req.Method != base.Options {
 		return liberrors.ErrClientUnhandledMethod{Method: req.Method}
 	}
 
-	if cseq, ok := req.Header["CSeq"]; !ok || len(cseq) != 1 {
-		return liberrors.ErrClientMissingCSeq{}
+	h := base.Header{
+		"User-Agent": base.HeaderValue{c.UserAgent},
+	}
+
+	if cseq, ok := req.Header["CSeq"]; ok {
+		h["CSeq"] = cseq
 	}
 
 	res := &base.Response{
 		StatusCode: base.StatusOK,
-		Header: base.Header{
-			"User-Agent": base.HeaderValue{c.UserAgent},
-			"CSeq":       req.Header["CSeq"],
-		},
+		Header:     h,
 	}
+
+	c.OnServerResponse(res)
 
 	c.nconn.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
 	return c.conn.WriteResponse(res)
@@ -693,7 +717,7 @@ func (c *Client) checkState(allowed map[clientState]struct{}) error {
 }
 
 func (c *Client) trySwitchingProtocol() error {
-	c.OnTransportSwitch(fmt.Errorf("no UDP packets received, switching to TCP"))
+	c.OnTransportSwitch(liberrors.ErrClientSwitchToTCP{})
 
 	prevConnURL := c.connURL
 	prevBaseURL := c.baseURL
@@ -732,7 +756,7 @@ func (c *Client) trySwitchingProtocol() error {
 }
 
 func (c *Client) trySwitchingProtocol2(medi *description.Media, baseURL *url.URL) (*base.Response, error) {
-	c.OnTransportSwitch(fmt.Errorf("switching to TCP because server requested it"))
+	c.OnTransportSwitch(liberrors.ErrClientSwitchToTCP2{})
 
 	prevConnURL := c.connURL
 
@@ -870,7 +894,8 @@ func (c *Client) do(req *base.Request, skipResponse bool) (*base.Response, error
 	}
 
 	c.cseq++
-	req.Header["CSeq"] = base.HeaderValue{strconv.FormatInt(int64(c.cseq), 10)}
+	cseqStr := strconv.FormatInt(int64(c.cseq), 10)
+	req.Header["CSeq"] = base.HeaderValue{cseqStr}
 
 	req.Header["User-Agent"] = base.HeaderValue{c.UserAgent}
 
@@ -890,13 +915,11 @@ func (c *Client) do(req *base.Request, skipResponse bool) (*base.Response, error
 		return nil, nil
 	}
 
-	res, err := c.waitResponse()
+	res, err := c.waitResponse(cseqStr)
 	if err != nil {
 		c.mustClose = true
 		return nil, err
 	}
-
-	c.OnResponse(res)
 
 	// get session from response
 	if v, ok := res.Header["Session"]; ok {
@@ -919,7 +942,7 @@ func (c *Client) do(req *base.Request, skipResponse bool) (*base.Response, error
 
 		sender, err := auth.NewSender(res.Header["WWW-Authenticate"], user, pass)
 		if err != nil {
-			return nil, fmt.Errorf("unable to setup authentication: %s", err)
+			return nil, liberrors.ErrClientAuthSetup{Err: err}
 		}
 		c.sender = sender
 
@@ -989,6 +1012,7 @@ func (c *Client) doCheckTimeout() error {
 }
 
 func (c *Client) doKeepAlive() error {
+	// some cameras do not reply to keepalives, do not wait for responses.
 	_, err := c.do(&base.Request{
 		Method: func() base.Method {
 			// the VLC integrated rtsp server requires GET_PARAMETER
@@ -999,7 +1023,7 @@ func (c *Client) doKeepAlive() error {
 		}(),
 		// use the stream base URL, otherwise some cameras do not reply
 		URL: c.baseURL,
-	}, false)
+	}, true)
 	return err
 }
 
@@ -1122,13 +1146,13 @@ func (c *Client) doDescribe(u *url.URL) (*description.Session, *base.Response, e
 	var ssd sdp.SessionDescription
 	err = ssd.Unmarshal(res.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, liberrors.ErrClientSDPInvalid{Err: err}
 	}
 
 	var desc description.Session
 	err = desc.Unmarshal(&ssd)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, liberrors.ErrClientSDPInvalid{Err: err}
 	}
 
 	baseURL, err := findBaseURL(&ssd, res, u)
@@ -1279,6 +1303,7 @@ func (c *Client) doSetup(
 
 		err := cm.allocateUDPListeners(
 			false,
+			nil,
 			net.JoinHostPort("", strconv.FormatInt(int64(rtpPort), 10)),
 			net.JoinHostPort("", strconv.FormatInt(int64(rtcpPort), 10)),
 		)
@@ -1328,7 +1353,7 @@ func (c *Client) doSetup(
 		// switch transport automatically
 		if res.StatusCode == base.StatusUnsupportedTransport &&
 			c.effectiveTransport == nil {
-			c.OnTransportSwitch(fmt.Errorf("switching to TCP because server requested it"))
+			c.OnTransportSwitch(liberrors.ErrClientSwitchToTCP2{})
 			v := TransportTCP
 			c.effectiveTransport = &v
 			return c.doSetup(baseURL, medi, 0, 0)
@@ -1374,10 +1399,11 @@ func (c *Client) doSetup(
 			return nil, liberrors.ErrClientServerPortsNotProvided{}
 		}
 
+		var readIP net.IP
 		if thRes.Source != nil {
-			cm.udpRTPListener.readIP = *thRes.Source
+			readIP = *thRes.Source
 		} else {
-			cm.udpRTPListener.readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
+			readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
 		}
 
 		if serverPortsValid {
@@ -1390,12 +1416,7 @@ func (c *Client) doSetup(
 				Port: thRes.ServerPorts[0],
 			}
 		}
-
-		if thRes.Source != nil {
-			cm.udpRTCPListener.readIP = *thRes.Source
-		} else {
-			cm.udpRTCPListener.readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
-		}
+		cm.udpRTPListener.readIP = readIP
 
 		if serverPortsValid {
 			if !c.AnyPortEnable {
@@ -1407,6 +1428,7 @@ func (c *Client) doSetup(
 				Port: thRes.ServerPorts[1],
 			}
 		}
+		cm.udpRTCPListener.readIP = readIP
 
 	case TransportUDPMulticast:
 		if thRes.Delivery == nil || *thRes.Delivery != headers.TransportDeliveryMulticast {
@@ -1421,8 +1443,16 @@ func (c *Client) doSetup(
 			return nil, liberrors.ErrClientTransportHeaderNoDestination{}
 		}
 
+		var readIP net.IP
+		if thRes.Source != nil {
+			readIP = *thRes.Source
+		} else {
+			readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
+		}
+
 		err := cm.allocateUDPListeners(
 			true,
+			readIP,
 			net.JoinHostPort(thRes.Destination.String(), strconv.FormatInt(int64(thRes.Ports[0]), 10)),
 			net.JoinHostPort(thRes.Destination.String(), strconv.FormatInt(int64(thRes.Ports[1]), 10)),
 		)
@@ -1430,14 +1460,14 @@ func (c *Client) doSetup(
 			return nil, err
 		}
 
-		cm.udpRTPListener.readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
+		cm.udpRTPListener.readIP = readIP
 		cm.udpRTPListener.readPort = thRes.Ports[0]
 		cm.udpRTPListener.writeAddr = &net.UDPAddr{
 			IP:   *thRes.Destination,
 			Port: thRes.Ports[0],
 		}
 
-		cm.udpRTCPListener.readIP = c.nconn.RemoteAddr().(*net.TCPAddr).IP
+		cm.udpRTCPListener.readIP = readIP
 		cm.udpRTCPListener.readPort = thRes.Ports[1]
 		cm.udpRTCPListener.writeAddr = &net.UDPAddr{
 			IP:   *thRes.Destination,

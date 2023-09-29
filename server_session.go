@@ -44,9 +44,7 @@ func serverParseURLForPlay(u *url.URL) (string, string, string, error) {
 	i := stringsReverseIndex(pathAndQuery, "/trackID=")
 	if i < 0 {
 		if !strings.HasSuffix(pathAndQuery, "/") {
-			return "", "", "", fmt.Errorf("path of a SETUP request must end with a slash. " +
-				"This typically happens when VLC fails a request, and then switches to an " +
-				"unsupported RTSP dialect")
+			return "", "", "", liberrors.ErrServerPathNoSlash{}
 		}
 
 		path, query := url.PathSplitQuery(pathAndQuery[:len(pathAndQuery)-1])
@@ -57,6 +55,23 @@ func serverParseURLForPlay(u *url.URL) (string, string, string, error) {
 	pathAndQuery, trackID = pathAndQuery[:i], pathAndQuery[i+len("/trackID="):]
 	path, query := url.PathSplitQuery(pathAndQuery)
 	return path, query, trackID, nil
+}
+
+func recordBaseURL(u *url.URL, path string, query string) *url.URL {
+	baseURL := &url.URL{
+		Scheme:   u.Scheme,
+		Host:     u.Host,
+		Path:     path,
+		RawQuery: query,
+	}
+
+	if baseURL.RawQuery != "" {
+		baseURL.RawQuery += "/"
+	} else {
+		baseURL.Path += "/"
+	}
+
+	return baseURL
 }
 
 func findMediaByURL(medias []*description.Media, baseURL *url.URL, u *url.URL) *description.Media {
@@ -763,26 +778,13 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 		case ServerSessionStateInitial, ServerSessionStatePrePlay: // play
 			medi = findMediaByTrackID(stream.desc.Medias, trackID)
 		default: // record
-			baseURL := &url.URL{
-				Scheme:   req.URL.Scheme,
-				Host:     req.URL.Host,
-				Path:     path,
-				RawQuery: query,
-			}
-
-			if baseURL.RawQuery != "" {
-				baseURL.RawQuery += "/"
-			} else {
-				baseURL.Path += "/"
-			}
-
-			medi = findMediaByURL(ss.announcedDesc.Medias, baseURL, req.URL)
+			medi = findMediaByURL(ss.announcedDesc.Medias, recordBaseURL(req.URL, path, query), req.URL)
 		}
 
 		if medi == nil {
 			return &base.Response{
 				StatusCode: base.StatusBadRequest,
-			}, fmt.Errorf("media not found")
+			}, liberrors.ErrServerMediaNotFound{}
 		}
 
 		if _, ok := ss.setuppedMedias[medi]; ok {
@@ -791,9 +793,10 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 			}, liberrors.ErrServerMediaAlreadySetup{}
 		}
 
+		ss.setuppedTransport = &transport
+
 		if ss.state == ServerSessionStateInitial {
 			err := stream.readerAdd(ss,
-				transport,
 				inTH.ClientPorts,
 			)
 			if err != nil {
@@ -815,8 +818,6 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 				th.SSRC = &ssrc
 			}
 		}
-
-		ss.setuppedTransport = &transport
 
 		if res.Header == nil {
 			res.Header = make(base.Header)

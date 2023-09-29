@@ -58,12 +58,15 @@ Features:
 * [client-read-options](examples/client-read-options/main.go)
 * [client-read-pause](examples/client-read-pause/main.go)
 * [client-read-republish](examples/client-read-republish/main.go)
+* [client-read-format-av1](examples/client-read-format-av1/main.go)
 * [client-read-format-g711](examples/client-read-format-g711/main.go)
 * [client-read-format-g722](examples/client-read-format-g722/main.go)
 * [client-read-format-h264](examples/client-read-format-h264/main.go)
 * [client-read-format-h264-convert-to-jpeg](examples/client-read-format-h264-convert-to-jpeg/main.go)
 * [client-read-format-h264-save-to-disk](examples/client-read-format-h264-save-to-disk/main.go)
 * [client-read-format-h265](examples/client-read-format-h265/main.go)
+* [client-read-format-h265-convert-to-jpeg](examples/client-read-format-h265-convert-to-jpeg/main.go)
+* [client-read-format-h265-save-to-disk](examples/client-read-format-h265-save-to-disk/main.go)
 * [client-read-format-lpcm](examples/client-read-format-lpcm/main.go)
 * [client-read-format-mjpeg](examples/client-read-format-mjpeg/main.go)
 * [client-read-format-mpeg4audio](examples/client-read-format-mpeg4audio/main.go)
@@ -106,7 +109,7 @@ In RTSP, media streams are routed between server and clients by using RTP packet
 |H265||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#H265)|:heavy_check_mark:|
 |H264||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#H264)|:heavy_check_mark:|
 |MPEG-4 Video (H263, Xvid)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG4VideoES)|:heavy_check_mark:|
-|MPEG-1/2 Video||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG1Video)||
+|MPEG-1/2 Video||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MPEG1Video)|:heavy_check_mark:|
 |M-JPEG||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#MJPEG)|:heavy_check_mark:|
 
 ### Audio
@@ -124,7 +127,7 @@ In RTSP, media streams are routed between server and clients by using RTP packet
 |G711 (PCMA, PCMU)||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#G711)|:heavy_check_mark:|
 |LPCM||[link](https://pkg.go.dev/github.com/bluenviron/gortsplib/v4/pkg/format#LPCM)|:heavy_check_mark:|
 
-### Mixed
+### Other
 
 |format / codec|variant|documentation|encoder and decoder available|
 |--------------|-------|-------------|-----------------------------|

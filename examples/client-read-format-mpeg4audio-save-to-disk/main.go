@@ -66,6 +66,7 @@ func main() {
 		// decode timestamp
 		pts, ok := c.PacketPTS(medi, pkt)
 		if !ok {
+			log.Printf("waiting for timestamp")
 			return
 		}
 

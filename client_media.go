@@ -1,7 +1,7 @@
 package gortsplib
 
 import (
-	"fmt"
+	"net"
 	"sync/atomic"
 	"time"
 
@@ -42,11 +42,17 @@ func (cm *clientMedia) close() {
 	}
 }
 
-func (cm *clientMedia) allocateUDPListeners(multicast bool, rtpAddress string, rtcpAddress string) error {
+func (cm *clientMedia) allocateUDPListeners(
+	multicastEnable bool,
+	multicastSourceIP net.IP,
+	rtpAddress string,
+	rtcpAddress string,
+) error {
 	if rtpAddress != ":0" {
 		l1, err := newClientUDPListener(
 			cm.c,
-			multicast,
+			multicastEnable,
+			multicastSourceIP,
 			rtpAddress,
 		)
 		if err != nil {
@@ -55,7 +61,8 @@ func (cm *clientMedia) allocateUDPListeners(multicast bool, rtpAddress string, r
 
 		l2, err := newClientUDPListener(
 			cm.c,
-			multicast,
+			multicastEnable,
+			multicastSourceIP,
 			rtcpAddress,
 		)
 		if err != nil {
@@ -193,7 +200,7 @@ func (cm *clientMedia) readRTPTCPPlay(payload []byte) {
 
 	forma, ok := cm.formats[pkt.PayloadType]
 	if !ok {
-		cm.c.OnDecodeError(fmt.Errorf("received RTP packet with unknown format: %d", pkt.PayloadType))
+		cm.c.OnDecodeError(liberrors.ErrClientRTPPacketUnknownPayloadType{PayloadType: pkt.PayloadType})
 		return
 	}
 
@@ -205,8 +212,7 @@ func (cm *clientMedia) readRTCPTCPPlay(payload []byte) {
 	atomic.StoreInt64(cm.c.tcpLastFrameTime, now.Unix())
 
 	if len(payload) > udpMaxPayloadSize {
-		cm.c.OnDecodeError(fmt.Errorf("RTCP packet size (%d) is greater than maximum allowed (%d)",
-			len(payload), udpMaxPayloadSize))
+		cm.c.OnDecodeError(liberrors.ErrClientRTCPPacketTooBig{L: len(payload), Max: udpMaxPayloadSize})
 		return
 	}
 
@@ -233,8 +239,7 @@ func (cm *clientMedia) readRTPTCPRecord(_ []byte) {
 
 func (cm *clientMedia) readRTCPTCPRecord(payload []byte) {
 	if len(payload) > udpMaxPayloadSize {
-		cm.c.OnDecodeError(fmt.Errorf("RTCP packet size (%d) is greater than maximum allowed (%d)",
-			len(payload), udpMaxPayloadSize))
+		cm.c.OnDecodeError(liberrors.ErrClientRTCPPacketTooBig{L: len(payload), Max: udpMaxPayloadSize})
 		return
 	}
 
@@ -255,7 +260,7 @@ func (cm *clientMedia) readRTPUDPPlay(payload []byte) {
 	atomic.AddUint64(cm.c.BytesReceived, uint64(plen))
 
 	if plen == (udpMaxPayloadSize + 1) {
-		cm.c.OnDecodeError(fmt.Errorf("RTP packet is too big to be read with UDP"))
+		cm.c.OnDecodeError(liberrors.ErrClientRTPPacketTooBigUDP{})
 		return
 	}
 
@@ -268,7 +273,7 @@ func (cm *clientMedia) readRTPUDPPlay(payload []byte) {
 
 	forma, ok := cm.formats[pkt.PayloadType]
 	if !ok {
-		cm.c.OnDecodeError(fmt.Errorf("received RTP packet with unknown format: %d", pkt.PayloadType))
+		cm.c.OnDecodeError(liberrors.ErrClientRTPPacketUnknownPayloadType{PayloadType: pkt.PayloadType})
 		return
 	}
 
@@ -282,7 +287,7 @@ func (cm *clientMedia) readRTCPUDPPlay(payload []byte) {
 	atomic.AddUint64(cm.c.BytesReceived, uint64(plen))
 
 	if plen == (udpMaxPayloadSize + 1) {
-		cm.c.OnDecodeError(fmt.Errorf("RTCP packet is too big to be read with UDP"))
+		cm.c.OnDecodeError(liberrors.ErrClientRTCPPacketTooBigUDP{})
 		return
 	}
 
@@ -313,7 +318,7 @@ func (cm *clientMedia) readRTCPUDPRecord(payload []byte) {
 	atomic.AddUint64(cm.c.BytesReceived, uint64(plen))
 
 	if plen == (udpMaxPayloadSize + 1) {
-		cm.c.OnDecodeError(fmt.Errorf("RTCP packet is too big to be read with UDP"))
+		cm.c.OnDecodeError(liberrors.ErrClientRTCPPacketTooBigUDP{})
 		return
 	}
 

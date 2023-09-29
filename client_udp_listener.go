@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/ipv4"
+	"github.com/bluenviron/gortsplib/v4/pkg/multicast"
 )
 
 func int64Ptr(v int64) *int64 {
@@ -52,6 +52,7 @@ func newClientUDPListenerPair(c *Client) (*clientUDPListener, *clientUDPListener
 		rtpListener, err := newClientUDPListener(
 			c,
 			false,
+			nil,
 			net.JoinHostPort("", strconv.FormatInt(int64(rtpPort), 10)),
 		)
 		if err != nil {
@@ -62,6 +63,7 @@ func newClientUDPListenerPair(c *Client) (*clientUDPListener, *clientUDPListener
 		rtcpListener, err := newClientUDPListener(
 			c,
 			false,
+			nil,
 			net.JoinHostPort("", strconv.FormatInt(int64(rtcpPort), 10)),
 		)
 		if err != nil {
@@ -73,36 +75,28 @@ func newClientUDPListenerPair(c *Client) (*clientUDPListener, *clientUDPListener
 	}
 }
 
+type packetConn interface {
+	net.PacketConn
+	SetReadBuffer(int) error
+}
+
 func newClientUDPListener(
 	c *Client,
-	multicast bool,
+	multicastEnable bool,
+	multicastSourceIP net.IP,
 	address string,
 ) (*clientUDPListener, error) {
-	var pc *net.UDPConn
-	if multicast {
-		host, port, err := net.SplitHostPort(address)
+	var pc packetConn
+	if multicastEnable {
+		intf, err := multicast.InterfaceForSource(multicastSourceIP)
 		if err != nil {
 			return nil, err
 		}
 
-		tmp, err := c.ListenPacket(restrictNetwork("udp", "224.0.0.0:"+port))
+		pc, err = multicast.NewSingleConn(intf, address, c.ListenPacket)
 		if err != nil {
 			return nil, err
 		}
-
-		p := ipv4.NewPacketConn(tmp)
-
-		err = p.SetMulticastTTL(multicastTTL)
-		if err != nil {
-			return nil, err
-		}
-
-		err = joinMulticastGroupOnAtLeastOneInterface(p, net.ParseIP(host))
-		if err != nil {
-			return nil, err
-		}
-
-		pc = tmp.(*net.UDPConn)
 	} else {
 		tmp, err := c.ListenPacket(restrictNetwork("udp", address))
 		if err != nil {
@@ -113,6 +107,7 @@ func newClientUDPListener(
 
 	err := pc.SetReadBuffer(udpKernelReadBufferSize)
 	if err != nil {
+		pc.Close()
 		return nil, err
 	}
 

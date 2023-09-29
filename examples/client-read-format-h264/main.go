@@ -12,10 +12,10 @@ import (
 
 // This example shows how to
 // 1. connect to a RTSP server
-// 2. check if there's an H264 media
-// 3. decode H264 into RGBA frames
+// 2. check if there's an H264 media stream
+// 3. decode the H264 media stream into RGBA frames
 
-// This example requires the ffmpeg libraries, that can be installed in this way:
+// This example requires the FFmpeg libraries, that can be installed with this command:
 // apt install -y libavformat-dev libswscale-dev gcc pkg-config
 
 func main() {
@@ -54,18 +54,18 @@ func main() {
 	}
 
 	// setup H264 -> raw frames decoder
-	h264RawDec, err := newH264Decoder()
+	frameDec, err := newH264Decoder()
 	if err != nil {
 		panic(err)
 	}
-	defer h264RawDec.close()
+	defer frameDec.close()
 
 	// if SPS and PPS are present into the SDP, send them to the decoder
 	if forma.SPS != nil {
-		h264RawDec.decode(forma.SPS)
+		frameDec.decode(forma.SPS)
 	}
 	if forma.PPS != nil {
-		h264RawDec.decode(forma.PPS)
+		frameDec.decode(forma.PPS)
 	}
 
 	// setup a single media
@@ -79,6 +79,7 @@ func main() {
 		// decode timestamp
 		pts, ok := c.PacketPTS(medi, pkt)
 		if !ok {
+			log.Printf("waiting for timestamp")
 			return
 		}
 
@@ -93,7 +94,7 @@ func main() {
 
 		for _, nalu := range au {
 			// convert NALUs into RGBA frames
-			img, err := h264RawDec.decode(nalu)
+			img, err := frameDec.decode(nalu)
 			if err != nil {
 				panic(err)
 			}
@@ -103,7 +104,7 @@ func main() {
 				continue
 			}
 
-			log.Printf("decoded frame with PTS %v and size %v and pts %v", pts, img.Bounds().Max)
+			log.Printf("decoded frame with PTS %v and size %v", pts, img.Bounds().Max)
 		}
 	})
 

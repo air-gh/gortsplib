@@ -1,7 +1,6 @@
 package gortsplib
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -33,8 +32,9 @@ type ServerStream struct {
 	desc *description.Session
 
 	mutex                sync.RWMutex
-	activeUnicastReaders map[*ServerSession]struct{}
 	readers              map[*ServerSession]struct{}
+	multicastReaderCount int
+	activeUnicastReaders map[*ServerSession]struct{}
 	streamMedias         map[*description.Media]*serverStreamMedia
 	closed               bool
 }
@@ -44,8 +44,8 @@ func NewServerStream(s *Server, desc *description.Session) *ServerStream {
 	st := &ServerStream{
 		s:                    s,
 		desc:                 desc,
-		activeUnicastReaders: make(map[*ServerSession]struct{}),
 		readers:              make(map[*ServerSession]struct{}),
+		activeUnicastReaders: make(map[*ServerSession]struct{}),
 	}
 
 	st.streamMedias = make(map[*description.Media]*serverStreamMedia, len(desc.Medias))
@@ -135,17 +135,16 @@ func (st *ServerStream) rtpInfoEntry(medi *description.Media, now time.Time) *he
 
 func (st *ServerStream) readerAdd(
 	ss *ServerSession,
-	transport Transport,
 	clientPorts *[2]int,
 ) error {
 	st.mutex.Lock()
 	defer st.mutex.Unlock()
 
 	if st.closed {
-		return fmt.Errorf("stream is closed")
+		return liberrors.ErrServerStreamClosed{}
 	}
 
-	switch transport {
+	switch *ss.setuppedTransport {
 	case TransportUDP:
 		// check whether UDP ports and IP are already assigned to another reader
 		for r := range st.readers {
@@ -161,13 +160,16 @@ func (st *ServerStream) readerAdd(
 		}
 
 	case TransportUDPMulticast:
-		// allocate multicast listeners
-		for _, media := range st.streamMedias {
-			err := media.allocateMulticastHandler(st.s)
-			if err != nil {
-				return err
+		if st.multicastReaderCount == 0 {
+			for _, media := range st.streamMedias {
+				mh, err := newServerMulticastWriter(st.s)
+				if err != nil {
+					return err
+				}
+				media.multicastWriter = mh
 			}
 		}
+		st.multicastReaderCount++
 	}
 
 	st.readers[ss] = struct{}{}
@@ -185,9 +187,10 @@ func (st *ServerStream) readerRemove(ss *ServerSession) {
 
 	delete(st.readers, ss)
 
-	if len(st.readers) == 0 {
-		for _, media := range st.streamMedias {
-			if media.multicastWriter != nil {
+	if *ss.setuppedTransport == TransportUDPMulticast {
+		st.multicastReaderCount--
+		if st.multicastReaderCount == 0 {
+			for _, media := range st.streamMedias {
 				media.multicastWriter.close()
 				media.multicastWriter = nil
 			}
@@ -251,7 +254,7 @@ func (st *ServerStream) WritePacketRTPWithNTP(medi *description.Media, pkt *rtp.
 	defer st.mutex.RUnlock()
 
 	if st.closed {
-		return fmt.Errorf("stream is closed")
+		return liberrors.ErrServerStreamClosed{}
 	}
 
 	sm := st.streamMedias[medi]
@@ -270,7 +273,7 @@ func (st *ServerStream) WritePacketRTCP(medi *description.Media, pkt rtcp.Packet
 	defer st.mutex.RUnlock()
 
 	if st.closed {
-		return fmt.Errorf("stream is closed")
+		return liberrors.ErrServerStreamClosed{}
 	}
 
 	sm := st.streamMedias[medi]
