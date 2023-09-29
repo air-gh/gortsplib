@@ -1,4 +1,4 @@
-package rtpmpeg4audiolatm
+package rtpac3
 
 import (
 	"testing"
@@ -14,12 +14,12 @@ func TestDecode(t *testing.T) {
 			err := d.Init()
 			require.NoError(t, err)
 
-			var au []byte
+			var frames [][]byte
 
 			for _, pkt := range ca.pkts {
 				clone := pkt.Clone()
 
-				au, err = d.Decode(pkt)
+				addFrames, err := d.Decode(pkt)
 
 				// test input integrity
 				require.Equal(t, clone, pkt)
@@ -29,39 +29,19 @@ func TestDecode(t *testing.T) {
 				}
 
 				require.NoError(t, err)
+				frames = append(frames, addFrames...)
 			}
 
-			require.Equal(t, ca.au, au)
+			require.Equal(t, ca.frames, frames)
 		})
 	}
-}
-
-func TestDecodeOtherData(t *testing.T) {
-	d := &Decoder{}
-	err := d.Init()
-	require.NoError(t, err)
-
-	au, err := d.Decode(&rtp.Packet{
-		Header: rtp.Header{
-			Version:        2,
-			Marker:         true,
-			PayloadType:    96,
-			SequenceNumber: 17645,
-			SSRC:           2646308882,
-		},
-		Payload: []byte{
-			0x04, 0x01, 0x02, 0x03, 0x04, 5, 6,
-		},
-	})
-	require.NoError(t, err)
-
-	require.Equal(t, []byte{1, 2, 3, 4}, au)
 }
 
 func FuzzDecoder(f *testing.F) {
 	f.Fuzz(func(t *testing.T, a []byte, am bool, b []byte, bm bool) {
 		d := &Decoder{}
-		d.Init() //nolint:errcheck
+		err := d.Init()
+		require.NoError(t, err)
 
 		d.Decode(&rtp.Packet{ //nolint:errcheck
 			Header: rtp.Header{

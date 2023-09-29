@@ -1,4 +1,4 @@
-package rtpmpeg4audiogeneric
+package rtpmpeg4audio
 
 import (
 	"testing"
@@ -7,13 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDecode(t *testing.T) {
-	for _, ca := range cases {
+func TestDecodeLATM(t *testing.T) {
+	for _, ca := range casesLATM {
 		t.Run(ca.name, func(t *testing.T) {
 			d := &Decoder{
-				SizeLength:       ca.sizeLength,
-				IndexLength:      ca.indexLength,
-				IndexDeltaLength: ca.indexDeltaLength,
+				LATM: true,
 			}
 			err := d.Init()
 			require.NoError(t, err)
@@ -23,7 +21,7 @@ func TestDecode(t *testing.T) {
 			for _, pkt := range ca.pkts {
 				clone := pkt.Clone()
 
-				addAUs, err := d.Decode(pkt)
+				aus, err = d.Decode(pkt)
 
 				// test input integrity
 				require.Equal(t, clone, pkt)
@@ -33,51 +31,43 @@ func TestDecode(t *testing.T) {
 				}
 
 				require.NoError(t, err)
-				aus = append(aus, addAUs...)
 			}
 
-			require.Equal(t, ca.aus, aus)
+			require.Equal(t, ca.au, aus[0])
 		})
 	}
 }
 
-func TestDecodeADTS(t *testing.T) {
+func TestDecodeLATMOtherData(t *testing.T) {
 	d := &Decoder{
-		SizeLength:       13,
-		IndexLength:      3,
-		IndexDeltaLength: 3,
+		LATM: true,
 	}
 	err := d.Init()
 	require.NoError(t, err)
 
-	for i := 0; i < 2; i++ {
-		aus, err := d.Decode(&rtp.Packet{
-			Header: rtp.Header{
-				Version:        2,
-				Marker:         true,
-				PayloadType:    96,
-				SequenceNumber: 17645,
-				SSRC:           0x9dbb7812,
-			},
-			Payload: []byte{
-				0x00, 0x10, 0x00, 0x09 << 3,
-				0xff, 0xf1, 0x4c, 0x80, 0x1, 0x3f, 0xfc, 0xaa, 0xbb,
-			},
-		})
-		require.NoError(t, err)
-		require.Equal(t, [][]byte{{0xaa, 0xbb}}, aus)
-	}
+	aus, err := d.Decode(&rtp.Packet{
+		Header: rtp.Header{
+			Version:        2,
+			Marker:         true,
+			PayloadType:    96,
+			SequenceNumber: 17645,
+			SSRC:           2646308882,
+		},
+		Payload: []byte{
+			0x04, 0x01, 0x02, 0x03, 0x04, 5, 6,
+		},
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, []byte{1, 2, 3, 4}, aus[0])
 }
 
-func FuzzDecoder(f *testing.F) {
+func FuzzDecoderLATM(f *testing.F) {
 	f.Fuzz(func(t *testing.T, a []byte, am bool, b []byte, bm bool) {
 		d := &Decoder{
-			SizeLength:       13,
-			IndexLength:      3,
-			IndexDeltaLength: 3,
+			LATM: true,
 		}
-		err := d.Init()
-		require.NoError(t, err)
+		d.Init() //nolint:errcheck
 
 		d.Decode(&rtp.Packet{ //nolint:errcheck
 			Header: rtp.Header{

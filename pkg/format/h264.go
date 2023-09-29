@@ -1,6 +1,7 @@
 package format
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 	"github.com/bluenviron/mediacommon/pkg/codecs/h264"
 )
 
-// H264 is a RTP format for the H264 codec, defined in MPEG-4 part 10.
+// H264 is a RTP format for the H264 codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc6184
 type H264 struct {
 	PayloadTyp        uint8
@@ -38,15 +39,21 @@ func (f *H264) unmarshal(ctx *unmarshalContext) error {
 					return fmt.Errorf("invalid sprop-parameter-sets (%v)", val)
 				}
 
+				// some cameras ship parameters with Annex-B prefix
+				sps = bytes.TrimPrefix(sps, []byte{0, 0, 0, 1})
+
 				pps, err := base64.StdEncoding.DecodeString(tmp[1])
 				if err != nil {
 					return fmt.Errorf("invalid sprop-parameter-sets (%v)", val)
 				}
 
+				// some cameras ship parameters with Annex-B prefix
+				pps = bytes.TrimPrefix(pps, []byte{0, 0, 0, 1})
+
 				var spsp h264.SPS
 				err = spsp.Unmarshal(sps)
 				if err != nil {
-					return fmt.Errorf("invalid SPS: %v", err)
+					continue
 				}
 
 				f.SPS = sps
