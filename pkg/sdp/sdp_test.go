@@ -2600,6 +2600,201 @@ var cases = []struct {
 			}},
 		},
 	},
+	{
+		"issue gortsplib/474",
+		[]byte("m=metadata 0 RTP/AVP 98\r\n" +
+			"c=IN IP4 0.0.0.0\r\n" +
+			"b=AS:1000\r\n" +
+			"a=rtpmap:98 METADATA/90000\r\n" +
+			"a=control:track2\r\n" +
+			"a=x-onvif-track:track2\r\n" +
+			"a=x-bufferdelay:1.000000\r\n"),
+		[]byte("v=0\r\n" +
+			"o= 0 0   \r\n" +
+			"m=metadata 0 RTP/AVP 98\r\n" +
+			"c=IN IP4 0.0.0.0\r\n" +
+			"b=AS:1000\r\n" +
+			"a=rtpmap:98 METADATA/90000\r\n" +
+			"a=control:track2\r\n" +
+			"a=x-onvif-track:track2\r\n" +
+			"a=x-bufferdelay:1.000000\r\n"),
+		SessionDescription{
+			MediaDescriptions: []*psdp.MediaDescription{{
+				MediaName: psdp.MediaName{
+					Media:   "metadata",
+					Protos:  []string{"RTP", "AVP"},
+					Formats: []string{"98"},
+				},
+				ConnectionInformation: &psdp.ConnectionInformation{
+					NetworkType: "IN",
+					AddressType: "IP4",
+					Address: &psdp.Address{
+						Address: "0.0.0.0",
+					},
+				},
+				Bandwidth: []psdp.Bandwidth{{
+					Type:      "AS",
+					Bandwidth: 1000,
+				}},
+				Attributes: []psdp.Attribute{
+					{
+						Key:   "rtpmap",
+						Value: "98 METADATA/90000",
+					},
+					{
+						Key:   "control",
+						Value: "track2",
+					},
+					{
+						Key:   "x-onvif-track",
+						Value: "track2",
+					},
+					{
+						Key:   "x-bufferdelay",
+						Value: "1.000000",
+					},
+				},
+			}},
+		},
+	},
+	{
+		"issue mediamtx/2762",
+		[]byte("v=0\r\n" +
+			"o=Channel1 3910280086 3910366486 IN IP4\r\n" +
+			"s=Channel1\r\n" +
+			"c=IN IP4 0.0.0.0\r\n" +
+			"t=3910280086 3910366486\r\n" +
+			"a=range:npt=0-\r\n" +
+			"a=control:*\r\n" +
+			"m=video 0 RTP/AVP 96\r\n" +
+			"a=control:0\r\n" +
+			"a=rtpmap:96 H264/90000\r\n" +
+			"a=recvonly\r\n" +
+			"a=fmtp:96 packetization-mode=1;profile-level-id=4D4016;" +
+			"sprop-parameter-sets=Z01AFo2NQFAX/L/4BDgEQ3AQEBQAAA+gAACcQ6GB9ACMq7y40MD6AEZV3lwo,aO44gA==\r\n" +
+			"m=audio 0 RTP/AVP 0\r\n" +
+			"a=control:1\r\n" +
+			"a=recvonly\r\n" +
+			"a=rtpmap:0 PCMU/8000\r\n" +
+			"m=application 0 RTP/AVP 107\r\n" +
+			"a=control:2\r\n" +
+			"a=recvonly\r\n" +
+			"a=rtpmap:107 METADATA/90000\r\n"),
+		[]byte("v=0\r\n" +
+			"o=Channel1 3910280086 3910366486 IN IP4 \r\n" +
+			"s=Channel1\r\n" +
+			"c=IN IP4 0.0.0.0\r\n" +
+			"t=3910280086 3910366486\r\n" +
+			"a=range:npt=0-\r\n" +
+			"a=control:*\r\n" +
+			"m=video 0 RTP/AVP 96\r\n" +
+			"a=control:0\r\n" +
+			"a=rtpmap:96 H264/90000\r\n" +
+			"a=recvonly\r\n" +
+			"a=fmtp:96 packetization-mode=1;profile-level-id=4D4016;" +
+			"sprop-parameter-sets=Z01AFo2NQFAX/L/4BDgEQ3AQEBQAAA+gAACcQ6GB9ACMq7y40MD6AEZV3lwo,aO44gA==\r\n" +
+			"m=audio 0 RTP/AVP 0\r\n" +
+			"a=control:1\r\n" +
+			"a=recvonly\r\n" +
+			"a=rtpmap:0 PCMU/8000\r\n" +
+			"m=application 0 RTP/AVP 107\r\n" +
+			"a=control:2\r\na=recvonly\r\na=rtpmap:107 METADATA/90000\r\n"),
+		SessionDescription{
+			Origin: psdp.Origin{
+				Username:       "Channel1",
+				SessionID:      3910280086,
+				SessionVersion: 3910366486,
+				NetworkType:    "IN",
+				AddressType:    "IP4",
+			},
+			SessionName: "Channel1",
+			ConnectionInformation: &psdp.ConnectionInformation{
+				NetworkType: "IN",
+				AddressType: "IP4",
+				Address: &psdp.Address{
+					Address: "0.0.0.0",
+				},
+			},
+			TimeDescriptions: []psdp.TimeDescription{{Timing: psdp.Timing{StartTime: 3910280086, StopTime: 3910366486}}},
+			Attributes: []psdp.Attribute{
+				{
+					Key:   "range",
+					Value: "npt=0-",
+				},
+				{
+					Key:   "control",
+					Value: "*",
+				},
+			},
+			MediaDescriptions: []*psdp.MediaDescription{
+				{
+					MediaName: psdp.MediaName{
+						Media:   "video",
+						Protos:  []string{"RTP", "AVP"},
+						Formats: []string{"96"},
+					},
+					Attributes: []psdp.Attribute{
+						{
+							Key:   "control",
+							Value: "0",
+						},
+						{
+							Key:   "rtpmap",
+							Value: "96 H264/90000",
+						},
+						{
+							Key: "recvonly",
+						},
+						{
+							Key: "fmtp",
+							Value: "96 packetization-mode=1;profile-level-id=4D4016;" +
+								"sprop-parameter-sets=Z01AFo2NQFAX/L/4BDgEQ3AQEBQAAA+gAACcQ6GB9ACMq7y40MD6AEZV3lwo,aO44gA==",
+						},
+					},
+				},
+				{
+					MediaName: psdp.MediaName{
+						Media:   "audio",
+						Protos:  []string{"RTP", "AVP"},
+						Formats: []string{"0"},
+					},
+					Attributes: []psdp.Attribute{
+						{
+							Key:   "control",
+							Value: "1",
+						},
+						{
+							Key: "recvonly",
+						},
+						{
+							Key:   "rtpmap",
+							Value: "0 PCMU/8000",
+						},
+					},
+				},
+				{
+					MediaName: psdp.MediaName{
+						Media:   "application",
+						Protos:  []string{"RTP", "AVP"},
+						Formats: []string{"107"},
+					},
+					Attributes: []psdp.Attribute{
+						{
+							Key:   "control",
+							Value: "2",
+						},
+						{
+							Key: "recvonly",
+						},
+						{
+							Key:   "rtpmap",
+							Value: "107 METADATA/90000",
+						},
+					},
+				},
+			},
+		},
+	},
 }
 
 func TestUnmarshal(t *testing.T) {

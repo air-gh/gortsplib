@@ -89,6 +89,10 @@ func stringsReverseIndexByte(s string, b byte) int {
 func (s *SessionDescription) unmarshalOrigin(value string) error {
 	value = strings.Replace(value, " IN IPV4 ", " IN IP4 ", 1)
 
+	if strings.HasSuffix(value, "IN IP4") {
+		value += " "
+	}
+
 	i := strings.Index(value, " IN IP4 ")
 	if i < 0 {
 		i = strings.Index(value, " IN IP6 ")
@@ -425,7 +429,8 @@ func (s *SessionDescription) unmarshalMediaDescription(value string) error {
 	if fields[0] != "video" &&
 		fields[0] != "audio" &&
 		fields[0] != "application" &&
-		!strings.HasPrefix(fields[0], "application/") {
+		!strings.HasPrefix(fields[0], "application/") &&
+		fields[0] != "metadata" {
 		return fmt.Errorf("%w `%v`", errSDPInvalidValue, fields[0])
 	}
 	newMediaDesc.MediaName.Media = fields[0]
