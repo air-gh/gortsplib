@@ -13,7 +13,7 @@ import (
 	"github.com/bluenviron/gortsplib/v4/pkg/format/rtph265"
 )
 
-// H265 is a RTP format for the H265 codec.
+// H265 is the RTP format for the H265 codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc7798
 type H265 struct {
 	PayloadTyp uint8
@@ -53,7 +53,7 @@ func (f *H265) unmarshal(ctx *unmarshalContext) error {
 			var spsp h265.SPS
 			err = spsp.Unmarshal(f.SPS)
 			if err != nil {
-				return fmt.Errorf("invalid SPS: %v", err)
+				return fmt.Errorf("invalid SPS: %w", err)
 			}
 
 		case "sprop-pps":
@@ -69,7 +69,7 @@ func (f *H265) unmarshal(ctx *unmarshalContext) error {
 			var ppsp h265.PPS
 			err = ppsp.Unmarshal(f.PPS)
 			if err != nil {
-				return fmt.Errorf("invalid PPS: %v", err)
+				return fmt.Errorf("invalid PPS: %w", err)
 			}
 
 		case "sprop-max-don-diff":

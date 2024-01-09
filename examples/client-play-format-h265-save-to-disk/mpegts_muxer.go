@@ -15,9 +15,10 @@ func durationGoToMPEGTS(v time.Duration) int64 {
 
 // mpegtsMuxer allows to save a H265 stream into a MPEG-TS file.
 type mpegtsMuxer struct {
-	vps []byte
-	sps []byte
-	pps []byte
+	fileName string
+	vps      []byte
+	sps      []byte
+	pps      []byte
 
 	f            *os.File
 	b            *bufio.Writer
@@ -26,29 +27,22 @@ type mpegtsMuxer struct {
 	dtsExtractor *h265.DTSExtractor
 }
 
-// newMPEGTSMuxer allocates a mpegtsMuxer.
-func newMPEGTSMuxer(vps []byte, sps []byte, pps []byte) (*mpegtsMuxer, error) {
-	f, err := os.Create("mystream.ts")
+// initialize initializes a mpegtsMuxer.
+func (e *mpegtsMuxer) initialize() error {
+	var err error
+	e.f, err = os.Create(e.fileName)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	b := bufio.NewWriter(f)
+	e.b = bufio.NewWriter(e.f)
 
-	track := &mpegts.Track{
+	e.track = &mpegts.Track{
 		Codec: &mpegts.CodecH265{},
 	}
 
-	w := mpegts.NewWriter(b, []*mpegts.Track{track})
+	e.w = mpegts.NewWriter(e.b, []*mpegts.Track{e.track})
 
-	return &mpegtsMuxer{
-		vps:   vps,
-		sps:   sps,
-		pps:   pps,
-		f:     f,
-		b:     b,
-		w:     w,
-		track: track,
-	}, nil
+	return nil
 }
 
 // close closes all the mpegtsMuxer resources.
@@ -57,8 +51,8 @@ func (e *mpegtsMuxer) close() {
 	e.f.Close()
 }
 
-// encode encodes a H265 access unit into MPEG-TS.
-func (e *mpegtsMuxer) encode(au [][]byte, pts time.Duration) error {
+// writeH265 writes a H265 access unit into MPEG-TS.
+func (e *mpegtsMuxer) writeH265(au [][]byte, pts time.Duration) error {
 	// prepend an AUD. This is required by some players
 	filteredAU := [][]byte{
 		{byte(h265.NALUType_AUD_NUT) << 1, 1, 0x50},

@@ -3,6 +3,7 @@ package gortsplib
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	gourl "net/url"
 	"strconv"
@@ -81,33 +82,24 @@ type ServerConn struct {
 	done chan struct{}
 }
 
-func newServerConn(
-	s *Server,
-	nconn net.Conn,
-) *ServerConn {
-	ctx, ctxCancel := context.WithCancel(s.ctx)
+func (sc *ServerConn) initialize() {
+	ctx, ctxCancel := context.WithCancel(sc.s.ctx)
 
-	if s.TLSConfig != nil {
-		nconn = tls.Server(nconn, s.TLSConfig)
+	if sc.s.TLSConfig != nil {
+		sc.nconn = tls.Server(sc.nconn, sc.s.TLSConfig)
 	}
 
-	sc := &ServerConn{
-		s:               s,
-		nconn:           nconn,
-		bc:              bytecounter.New(nconn, nil, nil),
-		ctx:             ctx,
-		ctxCancel:       ctxCancel,
-		remoteAddr:      nconn.RemoteAddr().(*net.TCPAddr),
-		chReadRequest:   make(chan readReq),
-		chReadError:     make(chan error),
-		chRemoveSession: make(chan *ServerSession),
-		done:            make(chan struct{}),
-	}
+	sc.bc = bytecounter.New(sc.nconn, nil, nil)
+	sc.ctx = ctx
+	sc.ctxCancel = ctxCancel
+	sc.remoteAddr = sc.nconn.RemoteAddr().(*net.TCPAddr)
+	sc.chReadRequest = make(chan readReq)
+	sc.chReadError = make(chan error)
+	sc.chRemoveSession = make(chan *ServerSession)
+	sc.done = make(chan struct{})
 
-	s.wg.Add(1)
+	sc.s.wg.Add(1)
 	go sc.run()
-
-	return sc
 }
 
 // Close closes the ServerConn.
@@ -159,7 +151,10 @@ func (sc *ServerConn) run() {
 	}
 
 	sc.conn = conn.NewConn(sc.bc)
-	cr := newServerConnReader(sc)
+	cr := &serverConnReader{
+		sc: sc,
+	}
+	cr.initialize()
 
 	err := sc.runInner()
 
@@ -390,7 +385,8 @@ func (sc *ServerConn) handleRequestOuter(req *base.Request) error {
 	}
 
 	// add cseq
-	if _, ok := err.(liberrors.ErrServerCSeqMissing); !ok {
+	var eerr liberrors.ErrServerCSeqMissing
+	if !errors.As(err, &eerr) {
 		res.Header["CSeq"] = req.Header["CSeq"]
 	}
 

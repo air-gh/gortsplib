@@ -177,10 +177,10 @@ func (s ServerSessionState) String() string {
 
 // ServerSession is a server-side RTSP session.
 type ServerSession struct {
-	s        *Server
-	secretID string // must not be shared, allows to take ownership of the session
-	author   *ServerConn
+	s      *Server
+	author *ServerConn
 
+	secretID              string // must not be shared, allows to take ownership of the session
 	ctx                   context.Context
 	ctxCancel             func()
 	bytesReceived         *uint64
@@ -209,35 +209,26 @@ type ServerSession struct {
 	chStartWriter   chan struct{}
 }
 
-func newServerSession(
-	s *Server,
-	author *ServerConn,
-) *ServerSession {
-	ctx, ctxCancel := context.WithCancel(s.ctx)
+func (ss *ServerSession) initialize() {
+	ctx, ctxCancel := context.WithCancel(ss.s.ctx)
 
 	// use an UUID without dashes, since dashes confuse some clients.
 	secretID := strings.ReplaceAll(uuid.New().String(), "-", "")
 
-	ss := &ServerSession{
-		s:                   s,
-		secretID:            secretID,
-		author:              author,
-		ctx:                 ctx,
-		ctxCancel:           ctxCancel,
-		bytesReceived:       new(uint64),
-		bytesSent:           new(uint64),
-		conns:               make(map[*ServerConn]struct{}),
-		lastRequestTime:     s.timeNow(),
-		udpCheckStreamTimer: emptyTimer(),
-		chHandleRequest:     make(chan sessionRequestReq),
-		chRemoveConn:        make(chan *ServerConn),
-		chStartWriter:       make(chan struct{}),
-	}
+	ss.secretID = secretID
+	ss.ctx = ctx
+	ss.ctxCancel = ctxCancel
+	ss.bytesReceived = new(uint64)
+	ss.bytesSent = new(uint64)
+	ss.conns = make(map[*ServerConn]struct{})
+	ss.lastRequestTime = ss.s.timeNow()
+	ss.udpCheckStreamTimer = emptyTimer()
+	ss.chHandleRequest = make(chan sessionRequestReq)
+	ss.chRemoveConn = make(chan *ServerConn)
+	ss.chStartWriter = make(chan struct{})
 
-	s.wg.Add(1)
+	ss.s.wg.Add(1)
 	go ss.run()
-
-	return ss
 }
 
 // Close closes the ServerSession.
@@ -412,7 +403,7 @@ func (ss *ServerSession) runInner() error {
 
 			returnedSession := ss
 
-			if err == nil || isErrSwitchReadFunc(err) {
+			if err == nil || isSwitchReadFuncError(err) {
 				// ANNOUNCE responses don't contain the session header.
 				if req.req.Method != base.Announce &&
 					req.req.Method != base.Teardown {
@@ -453,7 +444,7 @@ func (ss *ServerSession) runInner() error {
 				ss:  returnedSession,
 			}
 
-			if (err == nil || isErrSwitchReadFunc(err)) && savedMethod == base.Teardown {
+			if (err == nil || isSwitchReadFuncError(err)) && savedMethod == base.Teardown {
 				return liberrors.ErrServerSessionTornDown{Author: req.sc.NetConn().RemoteAddr()}
 			}
 
@@ -838,7 +829,12 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 			res.Header = make(base.Header)
 		}
 
-		sm := newServerSessionMedia(ss, medi)
+		sm := &serverSessionMedia{
+			ss:           ss,
+			media:        medi,
+			onPacketRTCP: func(p rtcp.Packet) {},
+		}
+		sm.initialize()
 
 		switch transport {
 		case TransportUDP:
@@ -962,7 +958,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 
 		default: // TCP
 			ss.tcpConn = sc
-			err = errSwitchReadFunc{true}
+			err = switchReadFuncError{true}
 			// writer.start() is called by ServerConn after the response has been sent
 		}
 
@@ -1045,7 +1041,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 
 		default: // TCP
 			ss.tcpConn = sc
-			err = errSwitchReadFunc{true}
+			err = switchReadFuncError{true}
 			// runWriter() is called by conn after sending the response
 		}
 
@@ -1100,7 +1096,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 				ss.udpCheckStreamTimer = emptyTimer()
 
 			default: // TCP
-				err = errSwitchReadFunc{false}
+				err = switchReadFuncError{false}
 				ss.tcpConn = nil
 			}
 
@@ -1110,7 +1106,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 				ss.udpCheckStreamTimer = emptyTimer()
 
 			default: // TCP
-				err = errSwitchReadFunc{false}
+				err = switchReadFuncError{false}
 				ss.tcpConn = nil
 			}
 
@@ -1123,7 +1119,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 		var err error
 		if (ss.state == ServerSessionStatePlay || ss.state == ServerSessionStateRecord) &&
 			*ss.setuppedTransport == TransportTCP {
-			err = errSwitchReadFunc{false}
+			err = switchReadFuncError{false}
 		}
 
 		return &base.Response{

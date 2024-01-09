@@ -13,7 +13,7 @@ import (
 	"github.com/bluenviron/gortsplib/v4/pkg/format/rtpmpeg4video"
 )
 
-// MPEG4Video is a RTP format for a MPEG-4 Video codec.
+// MPEG4Video is the RTP format for a MPEG-4 Video codec.
 // Specification: https://datatracker.ietf.org/doc/html/rfc6416#section-7.1
 type MPEG4Video struct {
 	PayloadTyp     uint8
@@ -46,7 +46,7 @@ func (f *MPEG4Video) unmarshal(ctx *unmarshalContext) error {
 
 			err = mpeg4video.IsValidConfig(f.Config)
 			if err != nil {
-				return fmt.Errorf("invalid config: %v", err)
+				return fmt.Errorf("invalid config: %w", err)
 			}
 		}
 	}
