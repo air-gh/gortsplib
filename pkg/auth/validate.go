@@ -2,7 +2,7 @@ package auth
 
 import (
 	"crypto/md5"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
@@ -16,41 +16,10 @@ func md5Hex(in string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// GenerateNonce generates a nonce that can be used in Validate().
-func GenerateNonce() (string, error) {
-	byts := make([]byte, 16)
-	_, err := rand.Read(byts)
-	if err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(byts), nil
-}
-
-// GenerateWWWAuthenticate generates a WWW-Authenticate header.
-func GenerateWWWAuthenticate(methods []headers.AuthMethod, realm string, nonce string) base.HeaderValue {
-	if methods == nil {
-		methods = []headers.AuthMethod{headers.AuthBasic, headers.AuthDigest}
-	}
-
-	var ret base.HeaderValue
-	for _, m := range methods {
-		switch m {
-		case headers.AuthBasic:
-			ret = append(ret, (&headers.Authenticate{
-				Method: headers.AuthBasic,
-				Realm:  &realm,
-			}).Marshal()...)
-
-		case headers.AuthDigest:
-			ret = append(ret, headers.Authenticate{
-				Method: headers.AuthDigest,
-				Realm:  &realm,
-				Nonce:  &nonce,
-			}.Marshal()...)
-		}
-	}
-	return ret
+func sha256Hex(in string) string {
+	h := sha256.New()
+	h.Write([]byte(in))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func contains(list []headers.AuthMethod, item headers.AuthMethod) bool {
@@ -73,7 +42,7 @@ func Validate(
 	nonce string,
 ) error {
 	if methods == nil {
-		methods = []headers.AuthMethod{headers.AuthBasic, headers.AuthDigest}
+		methods = []headers.AuthMethod{headers.AuthDigestSHA256, headers.AuthDigestMD5, headers.AuthBasic}
 	}
 
 	var auth headers.Authorization
@@ -83,6 +52,49 @@ func Validate(
 	}
 
 	switch {
+	case (auth.Method == headers.AuthDigestSHA256 && contains(methods, headers.AuthDigestSHA256)) ||
+		(auth.Method == headers.AuthDigestMD5 && contains(methods, headers.AuthDigestMD5)):
+		if auth.Nonce != nonce {
+			return fmt.Errorf("wrong nonce")
+		}
+
+		if auth.Realm != realm {
+			return fmt.Errorf("wrong realm")
+		}
+
+		if auth.Username != user {
+			return fmt.Errorf("authentication failed")
+		}
+
+		ur := req.URL
+
+		if auth.URI != ur.String() {
+			// in SETUP requests, VLC strips the control attribute.
+			// try again with the base URL.
+			if baseURL != nil {
+				ur = baseURL
+				if auth.URI != ur.String() {
+					return fmt.Errorf("wrong URL")
+				}
+			} else {
+				return fmt.Errorf("wrong URL")
+			}
+		}
+
+		var response string
+
+		if auth.Method == headers.AuthDigestSHA256 {
+			response = sha256Hex(sha256Hex(user+":"+realm+":"+pass) +
+				":" + nonce + ":" + sha256Hex(string(req.Method)+":"+ur.String()))
+		} else {
+			response = md5Hex(md5Hex(user+":"+realm+":"+pass) +
+				":" + nonce + ":" + md5Hex(string(req.Method)+":"+ur.String()))
+		}
+
+		if auth.Response != response {
+			return fmt.Errorf("authentication failed")
+		}
+
 	case auth.Method == headers.AuthBasic && contains(methods, headers.AuthBasic):
 		if auth.BasicUser != user {
 			return fmt.Errorf("authentication failed")
@@ -91,60 +103,7 @@ func Validate(
 		if auth.BasicPass != pass {
 			return fmt.Errorf("authentication failed")
 		}
-	case auth.Method == headers.AuthDigest && contains(methods, headers.AuthDigest):
-		if auth.DigestValues.Realm == nil {
-			return fmt.Errorf("realm is missing")
-		}
 
-		if auth.DigestValues.Nonce == nil {
-			return fmt.Errorf("nonce is missing")
-		}
-
-		if auth.DigestValues.Username == nil {
-			return fmt.Errorf("username is missing")
-		}
-
-		if auth.DigestValues.URI == nil {
-			return fmt.Errorf("uri is missing")
-		}
-
-		if auth.DigestValues.Response == nil {
-			return fmt.Errorf("response is missing")
-		}
-
-		if *auth.DigestValues.Nonce != nonce {
-			return fmt.Errorf("wrong nonce")
-		}
-
-		if *auth.DigestValues.Realm != realm {
-			return fmt.Errorf("wrong realm")
-		}
-
-		if *auth.DigestValues.Username != user {
-			return fmt.Errorf("authentication failed")
-		}
-
-		ur := req.URL
-
-		if *auth.DigestValues.URI != ur.String() {
-			// in SETUP requests, VLC strips the control attribute.
-			// try again with the base URL.
-			if baseURL != nil {
-				ur = baseURL
-				if *auth.DigestValues.URI != ur.String() {
-					return fmt.Errorf("wrong URL")
-				}
-			} else {
-				return fmt.Errorf("wrong URL")
-			}
-		}
-
-		response := md5Hex(md5Hex(user+":"+realm+":"+pass) +
-			":" + nonce + ":" + md5Hex(string(req.Method)+":"+ur.String()))
-
-		if *auth.DigestValues.Response != response {
-			return fmt.Errorf("authentication failed")
-		}
 	default:
 		return fmt.Errorf("no supported authentication methods found")
 	}
